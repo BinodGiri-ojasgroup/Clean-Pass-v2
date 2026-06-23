@@ -8,3 +8,6 @@ git commit -m "Initial setup: backend + frontend structure"
 
 git branch -M main
 git push -u origin main
+
+
+git push origin main
