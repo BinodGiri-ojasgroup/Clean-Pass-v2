@@ -137,7 +137,7 @@ class VehicleDetailView(APIView):
             return err('Not found', 404)
 
         action = request.data.get('action')
-        from washstations.models import Wash, WashPackage
+        from washstation.models import Wash, WashPackage
 
         if action == 'remove':
             last = Wash.objects.filter(vehicle=v, shop=shop, redeemed=False, status='done').order_by('-created_at').first()

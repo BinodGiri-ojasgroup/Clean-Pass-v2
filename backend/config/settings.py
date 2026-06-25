@@ -8,7 +8,7 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-me-in-producti
 DEBUG = os.environ.get('DEBUG', 'True') == 'True'
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
-AUTH_USER_MODEL = "accounts.User"
+AUTH_USER_MODEL = 'auth.User'
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -20,11 +20,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
-    'accounts',
-    'customers',
-    'vehicles',
-    'washstations',
-    'subscriptions',
+    'washstation',
     'payments',
     'reports',
 ]
@@ -108,3 +104,13 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_ALL_ORIGINS = False
 
 NEXT_PUBLIC_APP_URL = os.environ.get('NEXT_PUBLIC_APP_URL', 'http://localhost:3000')
+
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+]
+
+GOOGLE_CLIENT_ID = os.environ.get(
+    'GOOGLE_CLIENT_ID', 
+    '649254033532-s5tteoe027ka0cienra609uulfk1lmvo.apps.googleusercontent.com'
+)

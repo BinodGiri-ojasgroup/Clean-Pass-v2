@@ -60,7 +60,7 @@ class RegisterSerializer(serializers.Serializer):
             VehicleType(shop=shop, name='Bus / Microbus', icon='🚌', wash_goal=6),
         ])
         # Seed default wash packages
-        from washstations.models import WashPackage
+        from washstation.models import WashPackage
         WashPackage.objects.bulk_create([
             WashPackage(shop=shop, name='Basic Wash', description='Exterior wash + rinse', price=200, stamp_value=1, color='#0ea5e9'),
             WashPackage(shop=shop, name='Premium Wash', description='Exterior + interior vacuum', price=350, stamp_value=1, color='#8b5cf6'),

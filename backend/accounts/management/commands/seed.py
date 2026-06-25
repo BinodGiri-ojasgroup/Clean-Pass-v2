@@ -11,7 +11,7 @@ class Command(BaseCommand):
         from accounts.models import User, Shop, Worker
         from customers.models import Customer
         from vehicles.models import VehicleType, Vehicle
-        from washstations.models import WashPackage, Wash
+        from washstation.models import WashPackage, Wash
 
         # Create demo user + shop
         email = 'demo@cleanpass.com'

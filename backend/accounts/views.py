@@ -1,6 +1,7 @@
 import io
 import qrcode
 import base64
+import sys
 from django.conf import settings
 from django.utils import timezone
 from rest_framework import status
@@ -8,6 +9,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
+from django.contrib.auth import get_user_model
+from django.utils.crypto import get_random_string
 
 from .models import Shop, Worker, Shift
 from .serializers import (
@@ -15,7 +20,74 @@ from .serializers import (
     WorkerSerializer, ShiftSerializer,
 )
 
+User = get_user_model()
 
+class GoogleSignInView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token = request.data.get('token')
+        
+        # 🟢 Pulled dynamically from your central settings config to guarantee safety match
+        GOOGLE_CLIENT_ID = getattr(settings, 'GOOGLE_CLIENT_ID', '649254033532-s5tteoe027ka0cienra609uulfk1lmvo.apps.googleusercontent.com')
+        
+        if not token:
+            return err('Google token is required')
+
+        try:
+            # Verify payload authenticity against Google authorization servers
+            idinfo = id_token.verify_oauth2_token(token, google_requests.Request(), GOOGLE_CLIENT_ID)
+            email = (idinfo.get('email') or '').lower().strip()
+            name = idinfo.get('name', 'New Wash Station')
+            
+            if not email:
+                return err('Email metadata missing from Google account')
+
+            # 1. Check if a Shop already exists with this email
+            try:
+                shop = Shop.objects.get(email=email)
+                user = shop.user
+                is_new_shop = False
+            except Shop.DoesNotExist:
+                # 2. If it doesn't exist, create both User and Shop records
+                username = email.split('@')[0]
+                
+                # Ensure username uniqueness
+                if User.objects.filter(username=username).exists():
+                    import uuid
+                    username = f"{username}_{uuid.uuid4().hex[:6]}"
+                
+                user = User.objects.create_user(
+                    username=username,
+                    email=email,
+                    password=get_random_string(length=32)
+                )
+                
+                shop = Shop.objects.create(
+                    user=user,
+                    name=name,
+                    email=email
+                )
+                is_new_shop = True
+
+            # 3. Mint standard project SimpleJWT keypairs
+            refresh = RefreshToken.for_user(user)
+            
+            return ok({
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+                'shopId': str(shop.id),
+                'name': shop.name,
+                'isNewShop': is_new_shop  # Helps frontend decide if onboarding redirects are needed
+            })
+
+        except ValueError:
+            return err('Invalid or forged Google token signature', 400)
+        except Exception as e:
+            # 🟢 Catch and output database constraint/validation exceptions cleanly to console
+            print(f"❌ Google Auth Framework Error: {str(e)}", file=sys.stderr)
+            return err(f'Authentication processing failure: {str(e)}', 400)
+        
 def ok(data, status_code=200):
     return Response({'success': True, 'data': data}, status=status_code)
 
@@ -248,7 +320,7 @@ class DashboardStatsView(APIView):
 
         from django.db.models import Sum
         from datetime import timedelta
-        from washstations.models import Wash, WashRequest, Appointment
+        from washstation.models import Wash, WashRequest, Appointment
         from vehicles.models import Vehicle
 
         now = timezone.now()
