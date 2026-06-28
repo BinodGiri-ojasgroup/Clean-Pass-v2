@@ -1,16 +1,18 @@
 'use client'
 import { useState, useEffect, useRef, useCallback, use } from 'react'
+import api from '@/lib/api'
 
 interface ShopInfo {
-  id: string; name: string; address: string | null; shopLogo: string | null; themeColor: string | null
-  vehicleTypes: { id: string; name: string; icon: string; washGoal: number }[]
-  packages: { id: string; name: string; description: string | null; price: number; stampValue: number; color: string; vehicleTypeId: string | null }[]
+  id: string
+  name: string
+  logo: string | null
+  themeColor: string | null
 }
 
 type Step = 'form' | 'submitted' | 'tracking' | 'check_form' | 'checking' | 'my_card'
 
 interface WashStatus {
-  status: string        // pending_approval | queued | washing | done
+  status: string
   queuePosition: number | null
   packageName: string | null
   workerName: string | null
@@ -29,10 +31,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
 
   // Request form
   const [phone, setPhone] = useState('')
-  const [name, setName] = useState('')
   const [plateNo, setPlateNo] = useState('')
-  const [vehicleTypeId, setVehicleTypeId] = useState('')
-  const [packageId, setPackageId] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -44,7 +43,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
   // Check status form
   const [checkPlate, setCheckPlate] = useState('')
   const [checkError, setCheckError] = useState('')
-  const [checkInput, setCheckInput] = useState('')   // phone or plate
+  const [checkInput, setCheckInput] = useState('')
   const [myVehicles, setMyVehicles] = useState<{id:string;plateNo:string;vehicleTypeName:string;vehicleTypeIcon:string;washGoal:number;activeWashes:number}[]|null>(null)
   const [myCardInput, setMyCardInput] = useState('')
   const [myCardError, setMyCardError] = useState('')
@@ -83,23 +82,25 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
   }
 
   useEffect(() => {
-    fetch(`/api/public/scan?shopId=${shopId}`).then(r => r.json()).then(d => {
-      if (d.success) {
-        setShop(d.data)
-        if (d.data.vehicleTypes?.[0]) setVehicleTypeId(d.data.vehicleTypes[0].id)
-      } else setShopError(true)
+    api.get(`/public/shops/${shopId}/`).then(res => {
+      if (res.data.success) {
+        setShop(res.data.data)
+      } else {
+        setShopError(true)
+      }
     }).catch(() => setShopError(true))
   }, [shopId])
 
   const fetchStatus = useCallback(async (plate: string) => {
     try {
-      const res = await fetch(`/api/public/track?plateNo=${encodeURIComponent(normPlate(plate))}&shopId=${shopId}`)
-      const json = await res.json()
-      if (!json.success || !json.data.found) { setStatusLoading(false); return }
-      const d = json.data
+      const res = await api.get(`/public/track/${shopId}/?plateNo=${encodeURIComponent(normPlate(plate))}`)
+      if (!res.data.success || !res.data.data.found) { 
+        setStatusLoading(false)
+        return 
+      }
+      const d = res.data.data
       const newStatus = d.activeWash?.status || 'no_wash'
 
-      // Play chime when wash becomes done
       if (prevStatusRef.current && prevStatusRef.current !== 'done' && prevStatusRef.current !== 'no_wash' && newStatus === 'no_wash') {
         playChime()
       }
@@ -120,71 +121,94 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
     setStatusLoading(false)
   }, [shopId])
 
-  // Start/stop polling when in tracking or checking steps
   useEffect(() => {
     const plate = step === 'tracking' ? trackingPlate : step === 'checking' ? checkPlate : null
-    if (!plate) { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }; return }
+    if (!plate) { 
+      if (pollRef.current) { 
+        clearInterval(pollRef.current)
+        pollRef.current = null 
+      }
+      return 
+    }
     setStatusLoading(true)
     fetchStatus(plate)
     pollRef.current = setInterval(() => fetchStatus(plate), 5000)
-    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null } }
+    return () => { 
+      if (pollRef.current) { 
+        clearInterval(pollRef.current)
+        pollRef.current = null 
+      } 
+    }
   }, [step, trackingPlate, checkPlate, fetchStatus])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!phone.trim()) return setError('Phone number is required')
     if (!plateNo.trim()) return setError('Vehicle plate number is required')
-    if (!vehicleTypeId) return setError('Select your vehicle type')
+    
     try {
       if (!audioRef.current) audioRef.current = new AudioContext()
       if (audioRef.current.state === 'suspended') audioRef.current.resume()
     } catch { /**/ }
-    setLoading(true); setError('')
+    
+    setLoading(true)
+    setError('')
+    
     try {
-      const res = await fetch('/api/public/wash', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shopId, phone: normPhone(phone), name: name.trim() || undefined, plateNo, vehicleTypeId, packageId: packageId || undefined })
+      const res = await api.post(`/public/wash-requests/${shopId}/`, {
+        phone: normPhone(phone),
+        plate_no: normPlate(plateNo)
       })
-      const json = await res.json()
-      if (!json.success) { setError(json.error); return }
+      
+      if (!res.data.success) { 
+        setError(res.data.error || 'Something went wrong')
+        return 
+      }
+      
       const plate = normPlate(plateNo)
       setTrackingPlate(plate)
-      prevStatusRef.current = 'pending_approval'
+      prevStatusRef.current = 'pending'
       setStep('submitted')
-    } catch { setError('Something went wrong. Try again.') }
-    finally { setLoading(false) }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Something went wrong. Try again.')
+    } finally { 
+      setLoading(false) 
+    }
   }
 
   async function handleMyCard(e: React.FormEvent) {
     e.preventDefault()
     const input = myCardInput.trim()
     if (!input) return setMyCardError('Enter your plate number or phone number')
-    setMyCardError(''); setMyCardData(null)
+    setMyCardError('')
+    setMyCardData(null)
+    
     try {
-      // Detect phone vs plate
       const isPhone = /^[+0-9\s]{7,15}$/.test(input) && !/[A-Za-z]/.test(input)
-      const normP = isPhone ? (() => { let p = input.replace(/[\s\-().]/g,''); if(p.startsWith('+'))p=p.slice(1); if(p.startsWith('977'))p=p.slice(3); if(p.startsWith('0'))p=p.slice(1); return p })() : null
-      const normPlateVal = !isPhone ? input.toUpperCase().replace(/\s+/g,' ').trim() : null
+      const normP = isPhone ? normPhone(input) : null
+      const normPlateVal = !isPhone ? normPlate(input) : null
+      
       const url = normPlateVal
-        ? `/api/public/customer?shopId=${shopId}&plateNo=${encodeURIComponent(normPlateVal)}`
-        : `/api/public/customer?shopId=${shopId}&phone=${encodeURIComponent(normP!)}`
-      const res = await fetch(url)
-      const json = await res.json()
-      if (!json.success) return setMyCardError('Something went wrong')
-      if (!json.data.exists) return setMyCardError('No loyalty card found. Complete a wash first!')
-      // If phone lookup returned multiple vehicles, show first one's detail
-      if (json.data.vehicles && !json.data.vehicle) {
-        if (json.data.vehicles.length === 0) return setMyCardError('No vehicles found')
-        // fetch detail for first vehicle
-        const firstPlate = json.data.vehicles[0].plateNo
-        const res2 = await fetch(`/api/public/customer?shopId=${shopId}&plateNo=${encodeURIComponent(firstPlate)}`)
-        const json2 = await res2.json()
-        setMyCardData(json2.data)
+        ? `/public/customer/${shopId}/?plateNo=${encodeURIComponent(normPlateVal)}`
+        : `/public/customer/${shopId}/?phone=${encodeURIComponent(normP!)}`
+      
+      const res = await api.get(url)
+      
+      if (!res.data.success) return setMyCardError('Something went wrong')
+      if (!res.data.data.exists) return setMyCardError('No loyalty card found. Complete a wash first!')
+      
+      if (res.data.data.vehicles && !res.data.data.vehicle) {
+        if (res.data.data.vehicles.length === 0) return setMyCardError('No vehicles found')
+        const firstPlate = res.data.data.vehicles[0].plateNo
+        const res2 = await api.get(`/public/customer/${shopId}/?plateNo=${encodeURIComponent(firstPlate)}`)
+        setMyCardData(res2.data.data)
       } else {
-        setMyCardData(json.data)
+        setMyCardData(res.data.data)
       }
       setStep('my_card')
-    } catch { setMyCardError('Something went wrong') }
+    } catch { 
+      setMyCardError('Something went wrong') 
+    }
   }
 
   async function handleCheckStatus(e: React.FormEvent) {
@@ -196,30 +220,26 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
     setWashStatus(null)
     prevStatusRef.current = null
 
-    // Detect if input is a phone number (digits only) or plate (has letters)
     const isPhone = /^[+0-9\s\-]{7,15}$/.test(input) && !/[A-Z]/.test(input.toUpperCase().replace(/[0-9+\s\-]/g,''))
     
     if (isPhone) {
-      // Look up all vehicles for this phone
-      const normP = (() => { let p = input.replace(/[\s\-().]/g,'').trim(); if(p.startsWith('+'))p=p.slice(1); if(p.startsWith('977'))p=p.slice(3); if(p.startsWith('0'))p=p.slice(1); return p })()
+      const normP = normPhone(input)
       try {
-        const res = await fetch(`/api/public/customer?shopId=${shopId}&phone=${encodeURIComponent(normP)}`)
-        const json = await res.json()
-        if (json.success && json.data.exists && json.data.vehicles?.length > 0) {
-          setMyVehicles(json.data.vehicles)
-          if (json.data.vehicles.length === 1) {
-            // Only one vehicle - go straight to status
-            setCheckPlate(json.data.vehicles[0].plateNo)
+        const res = await api.get(`/public/customer/${shopId}/?phone=${encodeURIComponent(normP)}`)
+        if (res.data.success && res.data.data.exists && res.data.data.vehicles?.length > 0) {
+          setMyVehicles(res.data.data.vehicles)
+          if (res.data.data.vehicles.length === 1) {
+            setCheckPlate(res.data.data.vehicles[0].plateNo)
             setStep('checking')
           }
-          // Multiple vehicles - show list to pick from
         } else {
           setCheckError('No vehicles found for this phone number')
         }
-      } catch { setCheckError('Something went wrong') }
+      } catch { 
+        setCheckError('Something went wrong') 
+      }
     } else {
-      // It's a plate number
-      setCheckPlate(input.toUpperCase())
+      setCheckPlate(normPlate(input))
       setStep('checking')
     }
   }
@@ -230,14 +250,22 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
   }
 
   function reset() {
-    setStep('form'); setError(''); setWashStatus(null)
-    setTrackingPlate(''); setCheckPlate(''); setCheckError('')
-    setMyCardInput(''); setMyCardError(''); setMyCardData(null)
+    setStep('form')
+    setError('')
+    setWashStatus(null)
+    setTrackingPlate('')
+    setCheckPlate('')
+    setCheckError('')
+    setMyCardInput('')
+    setMyCardError('')
+    setMyCardData(null)
     prevStatusRef.current = null
-    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    if (pollRef.current) { 
+      clearInterval(pollRef.current)
+      pollRef.current = null 
+    }
   }
 
-  // Styles
   const bg = '#0c1a2e'
   const card: React.CSSProperties = { background: 'rgba(255,255,255,0.05)', border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 20, padding: '1.5rem' }
   const inp: React.CSSProperties = { width: '100%', background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(56,189,248,0.25)', borderRadius: 12, padding: '14px 16px', color: '#e8f4fd', fontSize: 16, outline: 'none', boxSizing: 'border-box' }
@@ -245,15 +273,15 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
   const btnGhost: React.CSSProperties = { width: '100%', background: 'rgba(255,255,255,0.06)', border: '0.5px solid rgba(255,255,255,0.15)', borderRadius: 12, padding: '13px', fontSize: 14, color: 'rgba(232,244,253,0.6)', cursor: 'pointer' }
   const lbl: React.CSSProperties = { display: 'block', color: 'rgba(232,244,253,0.6)', fontSize: 13, marginBottom: 8, fontWeight: 500 }
 
-  const selectedVt = shop?.vehicleTypes.find(v => v.id === vehicleTypeId)
-
   if (shopError) return (
     <div style={{ minHeight: '100vh', background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem', textAlign: 'center' }}>
-      <div><div style={{ fontSize: 48, marginBottom: 16 }}>🚗</div><h2 style={{ color: '#e8f4fd' }}>Wash station not found</h2></div>
+      <div>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🚗</div>
+        <h2 style={{ color: '#e8f4fd' }}>Wash station not found</h2>
+      </div>
     </div>
   )
 
-  // ── STATUS CARD COMPONENT ─────────────────────────────────────────
   function StatusCard({ plate }: { plate: string }) {
     if (statusLoading || !washStatus) {
       return (
@@ -276,14 +304,12 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        {/* Plate badge */}
         <div style={{ textAlign: 'center' }}>
           <div style={{ background: `${theme}15`, border: `1px solid ${theme}40`, borderRadius: 10, padding: '6px 16px', display: 'inline-block', fontFamily: 'monospace', fontSize: 18, fontWeight: 700, color: theme, letterSpacing: 2 }}>{plate}</div>
           {shopName && <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.35)', marginTop: 4 }}>📍 {shopName}</div>}
         </div>
 
-        {/* Status card */}
-        {status === 'pending_approval' && (
+        {status === 'pending' && (
           <div style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 16, padding: '1.5rem', textAlign: 'center' }}>
             <div style={{ fontSize: 48, marginBottom: 10 }}>⏳</div>
             <h3 style={{ color: '#f59e0b', fontSize: 18, fontWeight: 700, margin: '0 0 6px' }}>Waiting for staff approval</h3>
@@ -320,7 +346,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
           </div>
         )}
 
-        {(status === 'no_wash' || status === 'done') && (
+        {(status === 'done' || status === 'no_wash') && (
           <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 16, padding: '1.5rem', textAlign: 'center' }}>
             <div style={{ fontSize: 48, marginBottom: 10 }}>✅</div>
             <h3 style={{ color: '#4ade80', fontSize: 18, fontWeight: 700, margin: '0 0 6px' }}>
@@ -332,7 +358,6 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
           </div>
         )}
 
-        {/* Loyalty progress */}
         <div style={{ background: 'rgba(255,255,255,0.04)', border: '0.5px solid rgba(56,189,248,0.12)', borderRadius: 14, padding: '1rem 1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
             <span style={{ fontSize: 13, color: 'rgba(232,244,253,0.6)', fontWeight: 500 }}>🎯 Loyalty card</span>
@@ -348,7 +373,6 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
             : <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.3)' }}>{washGoal - activeStamps} more washes for a free wash</div>}
         </div>
 
-        {/* Recent history */}
         {recentWashes.length > 0 && (
           <div style={{ background: 'rgba(255,255,255,0.04)', border: '0.5px solid rgba(56,189,248,0.1)', borderRadius: 14, padding: '1rem 1.25rem' }}>
             <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8, fontWeight: 500 }}>Recent washes</div>
@@ -373,27 +397,19 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
       </div>
     )
   }
-  // ─────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ minHeight: '100vh', background: bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '1.25rem' }}>
       <div style={{ width: '100%', maxWidth: 400 }}>
-
-        {/* Shop header */}
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
-          {shop?.shopLogo
-            ? <img src={shop.shopLogo} alt={shop.name} style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'cover', marginBottom: 10, border: `2px solid ${theme}40` }} />
+          {shop?.logo
+            ? <img src={shop.logo} alt={shop.name} style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'cover', marginBottom: 10, border: `2px solid ${theme}40` }} />
             : <div style={{ width: 64, height: 64, borderRadius: 16, background: `${theme}20`, border: `2px solid ${theme}40`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, margin: '0 auto 10px' }}>🚗</div>}
           {shop && <>
             <div style={{ color: '#e8f4fd', fontSize: 20, fontWeight: 700 }}>{shop.name}</div>
-            {shop.address && <div style={{ color: 'rgba(232,244,253,0.4)', fontSize: 12, marginTop: 3 }}>{shop.address}</div>}
-            {selectedVt && <div style={{ marginTop: 8, background: `${theme}12`, border: `0.5px solid ${theme}25`, borderRadius: 8, padding: '5px 14px', display: 'inline-block', fontSize: 12, color: theme }}>
-              {selectedVt.icon} {selectedVt.washGoal} washes = free wash
-            </div>}
           </>}
         </div>
 
-        {/* ── FORM ── */}
         {step === 'form' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
             <div style={card}>
@@ -407,34 +423,6 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
                   <label style={lbl}>🚗 Plate number *</label>
                   <input suppressHydrationWarning type="text" value={plateNo} onChange={e => setPlateNo(e.target.value.toUpperCase())} placeholder="BA 1 PA 2345" required style={{ ...inp, fontFamily: 'monospace', letterSpacing: 1 }} />
                 </div>
-                <div>
-                  <label style={lbl}>Vehicle type *</label>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {shop?.vehicleTypes.map(vt => (
-                      <button key={vt.id} type="button" onClick={() => setVehicleTypeId(vt.id)}
-                        style={{ padding: '8px 14px', borderRadius: 8, border: `1.5px solid ${vehicleTypeId === vt.id ? theme : 'rgba(56,189,248,0.2)'}`, background: vehicleTypeId === vt.id ? `${theme}20` : 'rgba(255,255,255,0.04)', color: vehicleTypeId === vt.id ? theme : 'rgba(232,244,253,0.55)', fontSize: 13, cursor: 'pointer', fontWeight: vehicleTypeId === vt.id ? 600 : 400, display: 'flex', alignItems: 'center', gap: 5 }}>
-                        {vt.icon} {vt.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {shop?.packages && shop.packages.filter(p => !p.vehicleTypeId || p.vehicleTypeId === vehicleTypeId).length > 0 && (
-                  <div>
-                    <label style={lbl}>Package <span style={{ opacity: 0.5, fontWeight: 400 }}>(optional)</span></label>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <button type="button" onClick={() => setPackageId('')} style={{ padding: '6px 12px', borderRadius: 7, border: `1.5px solid ${!packageId ? theme : 'rgba(255,255,255,0.12)'}`, background: !packageId ? `${theme}15` : 'transparent', color: !packageId ? theme : 'rgba(232,244,253,0.4)', fontSize: 12, cursor: 'pointer' }}>Any</button>
-                      {shop.packages.filter(p => !p.vehicleTypeId || p.vehicleTypeId === vehicleTypeId).map(pkg => (
-                        <button key={pkg.id} type="button" onClick={() => setPackageId(pkg.id)} style={{ padding: '6px 12px', borderRadius: 7, border: `1.5px solid ${packageId === pkg.id ? pkg.color : 'rgba(255,255,255,0.12)'}`, background: packageId === pkg.id ? `${pkg.color}18` : 'transparent', color: packageId === pkg.id ? pkg.color : 'rgba(232,244,253,0.4)', fontSize: 12, cursor: 'pointer' }}>
-                          {pkg.name} · NPR {pkg.price}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <label style={lbl}>👤 Name <span style={{ opacity: 0.5, fontWeight: 400 }}>(optional)</span></label>
-                  <input suppressHydrationWarning type="text" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Ram Bahadur" style={inp} />
-                </div>
                 {error && <div style={{ background: 'rgba(248,113,113,0.1)', border: '0.5px solid rgba(248,113,113,0.3)', borderRadius: 8, padding: '10px 14px', color: '#f87171', fontSize: 13 }}>⚠ {error}</div>}
                 <button type="submit" disabled={loading} style={{ ...btnPrimary, opacity: loading ? 0.75 : 1, marginTop: 4 }}>
                   {loading ? 'Submitting…' : '🚗 Submit wash request'}
@@ -442,7 +430,6 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
               </form>
             </div>
 
-            {/* Check status section */}
             <div style={{ background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.2)', borderRadius: 16, padding: '1.25rem' }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: '#e8f4fd', marginBottom: 3 }}>🔍 Check your wash status</div>
               <div style={{ fontSize: 13, color: 'rgba(232,244,253,0.45)', marginBottom: '0.875rem' }}>Enter your phone number or plate number</div>
@@ -451,7 +438,6 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
                 <button type="submit" style={{ background: theme, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>Check →</button>
               </form>
               {checkError && <div style={{ color: '#f87171', fontSize: 12, marginTop: 6 }}>⚠ {checkError}</div>}
-              {/* Multiple vehicles picker */}
               {myVehicles && myVehicles.length > 1 && (
                 <div style={{ marginTop: '0.875rem' }}>
                   <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.5)', marginBottom: 8 }}>Select which vehicle to check:</div>
@@ -470,7 +456,6 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
               )}
             </div>
 
-            {/* My loyalty card */}
             <div style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 16, padding: '1.25rem' }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: '#e8f4fd', marginBottom: 3 }}>🎯 My loyalty card</div>
               <div style={{ fontSize: 13, color: 'rgba(232,244,253,0.45)', marginBottom: '0.875rem' }}>See your stamps, history and free wash progress</div>
@@ -483,11 +468,9 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
           </div>
         )}
 
-        {/* ── SUBMITTED (waiting for staff approval) ── */}
         {step === 'submitted' && (
           <div style={card}>
             <div style={{ textAlign: 'center', marginBottom: '1.25rem' }}>
-              {/* Progress steps */}
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0, marginBottom: 20 }}>
                 {[
                   { n: 1, l: 'Submitted', done: true },
@@ -520,24 +503,20 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
           </div>
         )}
 
-        {/* ── TRACKING (live status after approval) ── */}
         {step === 'tracking' && (
           <div style={card}>
             <StatusCard plate={trackingPlate} />
           </div>
         )}
 
-        {/* ── CHECKING (manual status check) ── */}
         {step === 'checking' && (
           <div style={card}>
             <StatusCard plate={normPlate(checkPlate)} />
           </div>
         )}
 
-        {/* ── MY LOYALTY CARD ── */}
         {step === 'my_card' && myCardData && myCardData.exists && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {/* Vehicle + customer header */}
             <div style={{ background: 'rgba(255,255,255,0.05)', border: '0.5px solid rgba(245,158,11,0.25)', borderRadius: 18, padding: '1.25rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(245,158,11,0.15)', border: '1.5px solid rgba(245,158,11,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>
@@ -558,7 +537,6 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
                 )}
               </div>
 
-              {/* Loyalty progress bar */}
               {myCardData.isRewardReady ? (
                 <div style={{ background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.35)', borderRadius: 12, padding: '0.875rem', marginBottom: '0.875rem', textAlign: 'center' }}>
                   <div style={{ fontSize: 28, marginBottom: 4 }}>🎁</div>
@@ -584,7 +562,6 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
                 </div>
               )}
 
-              {/* Stats row */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.5rem' }}>
                 {[
                   { label: 'Active', value: myCardData.activeWashes ?? 0, icon: '✦', color: '#f59e0b' },
@@ -605,7 +582,6 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
               )}
             </div>
 
-            {/* Wash history */}
             {myCardData.history && myCardData.history.length > 0 && (
               <div style={{ background: 'rgba(255,255,255,0.04)', border: '0.5px solid rgba(56,189,248,0.1)', borderRadius: 14, padding: '1rem 1.25rem' }}>
                 <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, fontWeight: 500 }}>Wash history</div>
@@ -637,7 +613,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
           </div>
         )}
 
-                <p style={{ textAlign: 'center', color: 'rgba(232,244,253,0.1)', fontSize: 11, marginTop: '1.5rem' }}>Powered by CleanPass Nepal</p>
+        <p style={{ textAlign: 'center', color: 'rgba(232,244,253,0.1)', fontSize: 11, marginTop: '1.5rem' }}>Powered by CleanPass Nepal</p>
       </div>
     </div>
   )

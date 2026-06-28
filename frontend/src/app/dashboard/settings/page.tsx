@@ -1,12 +1,50 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
+import api from '@/lib/api' 
 
-interface ShopData { id: string; name: string; email: string; address: string|null; phone: string|null; plan: string; planExpiresAt: string|null; planActive: boolean; freeLimit: number; shopLogo: string|null; themeColor: string|null; qrCode: string|null; wifiName: string|null; wifiPassword: string|null; wifiType: string|null; wifiHidden: boolean; smsEnabled: boolean; smsApiKey: string|null; smsSenderId: string|null }
+interface ShopData { 
+  id: string; name: string; email: string; address: string|null; phone: string|null; 
+  plan: string; planExpiresAt: string|null; planActive: boolean; freeLimit: number; 
+  shopLogo: string|null; themeColor: string|null; qrCode: string|null; 
+  wifiName: string|null; wifiPassword: string|null; wifiType: string|null; wifiHidden: boolean; 
+  smsEnabled: boolean; smsApiKey: string|null; smsSenderId: string|null 
+}
 
 const COLORS = ['#0ea5e9','#38bdf8','#6366f1','#8b5cf6','#10b981','#f59e0b','#ef4444','#ec4899','#f97316','#06b6d4']
 
+function mapApiToState(d: any): ShopData {
+  return {
+    id: d.id, name: d.name, email: d.email, address: d.address || null, phone: d.phone || null,
+    plan: d.plan, planExpiresAt: d.plan_expires_at || null, planActive: d.active, freeLimit: d.free_limit,
+    shopLogo: d.washstation_logo || null, themeColor: d.theme_color || null, qrCode: d.qr_code || null,
+    wifiName: d.wifi_name || null, wifiPassword: d.wifi_password || null, wifiType: d.wifi_type || null,
+    wifiHidden: d.wifi_hidden || false, smsEnabled: d.sms_enabled || false, smsApiKey: d.sms_api_key || null,
+    smsSenderId: d.sms_sender_id || null,
+  }
+}
+
+function mapStateToApi(data: Record<string, unknown>): Record<string, unknown> {
+  const payload: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(data)) {
+    if (key === 'shopLogo') payload['washstation_logo'] = value
+    else if (key === 'themeColor') payload['theme_color'] = value
+    else if (key === 'wifiName') payload['wifi_name'] = value
+    else if (key === 'wifiPassword') payload['wifi_password'] = value
+    else if (key === 'wifiType') payload['wifi_type'] = value
+    else if (key === 'wifiHidden') payload['wifi_hidden'] = value
+    else if (key === 'smsEnabled') payload['sms_enabled'] = value
+    else if (key === 'smsApiKey') payload['sms_api_key'] = value
+    else if (key === 'smsSenderId') payload['sms_sender_id'] = value
+    else payload[key] = value
+  }
+  return payload
+}
+
 export default function SettingsPage() {
   const [shop, setShop] = useState<ShopData | null>(null)
+  const [needsSetup, setNeedsSetup] = useState(false) // 👈 NEW: Tracks if user needs onboarding
+  const [setupForm, setSetupForm] = useState({ name: '', phone: '', address: '' }) // 👈 NEW: Setup form state
+  
   const [form, setForm] = useState({ name:'', address:'', phone:'' })
   const [shopLogo, setShopLogo] = useState('')
   const [themeColor, setThemeColor] = useState('#0ea5e9')
@@ -19,26 +57,69 @@ export default function SettingsPage() {
   const logoRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    fetch('/api/shops/me').then(r => r.json()).then(d => {
-      if (!d.success) return
-      const s = d.data; setShop(s)
-      setForm({ name: s.name, address: s.address || '', phone: s.phone || '' })
-      setShopLogo(s.shopLogo || '')
-      setThemeColor(s.themeColor || '#0ea5e9')
-      setWifiForm({ wifiName: s.wifiName || '', wifiPassword: s.wifiPassword || '', wifiType: s.wifiType || 'WPA', wifiHidden: s.wifiHidden || false })
-      setSmsForm({ smsEnabled: s.smsEnabled || false, smsApiKey: s.smsApiKey || '', smsSenderId: s.smsSenderId || 'CleanPass' })
-      if (s.qrCode) setQrData({ qrCode: s.qrCode, scanUrl: `${window.location.origin}/scan/${s.id}` })
-      fetch('/api/qr').then(r=>r.json()).then(d=>{ if(d.success) setQrData(d.data) }).catch(()=>{})
-    })
+    const fetchShop = async () => {
+      try {
+        const res = await api.get('/shops/me/')
+        if (res.data.success) {
+          const mappedData = mapApiToState(res.data.data)
+          setShop(mappedData)
+          setForm({ name: mappedData.name, address: mappedData.address || '', phone: mappedData.phone || '' })
+          setShopLogo(mappedData.shopLogo || '')
+          setThemeColor(mappedData.themeColor || '#0ea5e9')
+          setWifiForm({ wifiName: mappedData.wifiName || '', wifiPassword: mappedData.wifiPassword || '', wifiType: mappedData.wifiType || 'WPA', wifiHidden: mappedData.wifiHidden || false })
+          setSmsForm({ smsEnabled: mappedData.smsEnabled || false, smsApiKey: mappedData.smsApiKey || '', smsSenderId: mappedData.smsSenderId || 'CleanPass' })
+          if (mappedData.qrCode) setQrData({ qrCode: mappedData.qrCode, scanUrl: `${window.location.origin}/scan/${mappedData.id}` })
+          
+          try { const qrRes = await api.get('/qr/'); if(qrRes.data.success) setQrData(qrRes.data.data) } catch(e) {}
+        }
+      } catch (err: any) {
+        // 👇 CRITICAL: Detect the 404 and trigger Setup Mode
+        if (err.response?.status === 404 && err.response.data?.needs_setup) {
+          setNeedsSetup(true)
+        } else {
+          console.error("Failed to fetch shop profile:", err)
+        }
+      }
+    }
+    fetchShop()
   }, [])
+
+  // 👇 NEW FUNCTION: Handles the initial creation of the shop
+  async function handleInitialSetup(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const res = await api.post('/shops/me/', setupForm)
+      if (res.data.success) {
+        const mappedData = mapApiToState(res.data.data)
+        setShop(mappedData)
+        setNeedsSetup(false) // Switch to normal settings view
+        showSaved('✓ Shop created successfully!')
+      }
+    } catch (err) {
+      console.error("Setup failed:", err)
+      showSaved('✗ Failed to create shop')
+    }
+    setSaving(false)
+  }
 
   function showSaved(msg: string) { setSaved(msg); setTimeout(() => setSaved(''), 3000) }
 
   async function saveSection(data: Record<string,unknown>, label: string) {
     setSaving(true)
-    const res = await fetch('/api/shops/me', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
-    const d = await res.json()
-    if (d.success) showSaved(`✓ ${label} saved`)
+    try {
+      const payload = mapStateToApi(data)
+      const res = await api.patch('/shops/me/', payload)
+      if (res.data.success) {
+        showSaved(`✓ ${label} saved`)
+        setShop(mapApiToState(res.data.data))
+      } else {
+        showSaved(`✗ Failed to save ${label}`)
+      }
+    } catch (err) {
+      console.error("Save failed:", err)
+      showSaved(`✗ Network error saving ${label}`)
+    }
     setSaving(false)
   }
 
@@ -52,18 +133,53 @@ export default function SettingsPage() {
 
   async function generateQR() {
     setQrLoading(true)
-    const res = await fetch('/api/qr'); const d = await res.json()
-    if (d.success) setQrData(d.data)
+    try { const res = await api.get('/qr/'); if (res.data.success) setQrData(res.data.data) } catch (err) {}
     setQrLoading(false)
   }
 
-  if (!shop) return <div style={{ padding: '3rem', textAlign: 'center', color: 'rgba(232,244,253,0.3)' }}>Loading…</div>
-
+  // --- UI STYLING CONSTANTS ---
   const card: React.CSSProperties = { background: 'rgba(255,255,255,0.04)', border: '0.5px solid rgba(56,189,248,0.12)', borderRadius: 14, padding: '1.75rem', marginBottom: '1.5rem' }
   const inp: React.CSSProperties = { width: '100%', border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 8, padding: '10px 14px', fontSize: 14, color: '#e8f4fd', background: '#0f2035', outline: 'none', boxSizing: 'border-box' }
   const lbl: React.CSSProperties = { display: 'block', fontSize: 13, color: 'rgba(232,244,253,0.5)', marginBottom: 6 }
   const btn = (primary = true): React.CSSProperties => ({ background: primary ? '#0ea5e9' : 'transparent', color: primary ? '#fff' : 'rgba(232,244,253,0.5)', border: primary ? 'none' : '0.5px solid rgba(232,244,253,0.15)', borderRadius: 8, padding: '11px 24px', fontSize: 14, fontWeight: 600, cursor: saving ? 'not-allowed' : 'pointer', opacity: saving ? 0.7 : 1 })
 
+  // 👇 RENDER SETUP MODE IF NEEDED
+  if (needsSetup) {
+    return (
+      <div style={{ maxWidth: 600, margin: '0 auto', padding: '2rem' }}>
+        {saved && <div style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, background: '#166534', color: '#fff', borderRadius: 10, padding: '12px 20px', fontSize: 14, fontWeight: 500 }}>{saved}</div>}
+        <h1 style={{ fontFamily: 'Georgia, serif', fontSize: 26, fontWeight: 700, color: '#e8f4fd', margin: '0 0 1rem' }}>
+          Welcome! Let's set up your wash station.
+        </h1>
+        <p style={{ color: 'rgba(232,244,253,0.5)', marginBottom: '2rem', fontSize: 14 }}>
+          Please provide your shop details to get started. You can configure the rest later.
+        </p>
+        <form onSubmit={handleInitialSetup} style={card}>
+          <div style={{ display: 'grid', gap: '1rem', marginBottom: '1.5rem' }}>
+            <div>
+              <label style={lbl}>Station Name *</label>
+              <input style={inp} value={setupForm.name} onChange={e => setSetupForm(p=>({...p, name:e.target.value}))} placeholder="e.g., Shine Auto Spa" required />
+            </div>
+            <div>
+              <label style={lbl}>Phone</label>
+              <input style={inp} value={setupForm.phone} onChange={e => setSetupForm(p=>({...p, phone:e.target.value}))} placeholder="98XXXXXXXX" />
+            </div>
+            <div>
+              <label style={lbl}>Address</label>
+              <input style={inp} value={setupForm.address} onChange={e => setSetupForm(p=>({...p, address:e.target.value}))} placeholder="Thamel, Kathmandu" />
+            </div>
+          </div>
+          <button type="submit" disabled={saving} style={btn()}>
+            {saving ? 'Creating Shop...' : 'Create My Shop & Continue'}
+          </button>
+        </form>
+      </div>
+    )
+  }
+
+  if (!shop) return <div style={{ padding: '3rem', textAlign: 'center', color: 'rgba(232,244,253,0.3)' }}>Loading…</div>
+
+  // 👇 RENDER NORMAL SETTINGS MODE
   return (
     <div style={{ maxWidth: 600 }}>
       {saved && <div style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, background: '#166534', color: '#fff', borderRadius: 10, padding: '12px 20px', fontSize: 14, fontWeight: 500 }}>{saved}</div>}

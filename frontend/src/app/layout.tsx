@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
-// Using Inter as the primary modern sans-serif font family matching the clean design frame
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
@@ -19,7 +18,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable}`}>
+    // Added data-scroll-behavior="smooth" here
+    <html lang="en" className={`${inter.variable}`} data-scroll-behavior="smooth">
       <body className="bg-white text-slate-900 antialiased">
         {children}
       </body>

@@ -1,8 +1,13 @@
 'use client'
 import { useEffect, useState } from 'react'
+import api from '@/lib/api'
 
-interface Package { id: string; name: string; description: string|null; price: number; stampValue: number; color: string; active: boolean; vehicleTypeId: string|null; vehicleType?: { name: string }|null }
-interface VehicleType { id: string; name: string; icon: string; washGoal: number }
+interface Package { 
+  id: string; name: string; description: string|null; price: number; 
+  stampValue: number; color: string; active: boolean; 
+  vehicleTypeId: string|null; vehicle_type?: { name: string }|null 
+}
+interface VehicleType { id: string; name: string; icon: string; wash_goal: number }
 
 const COLORS = ['#0ea5e9','#8b5cf6','#f59e0b','#10b981','#ef4444','#ec4899','#f97316','#6366f1']
 const VT_ICONS = ['🚗','🏍️','🚙','🚌','🚐','🚑','🚒','🚜']
@@ -11,49 +16,107 @@ export default function PackagesPage() {
   const [packages, setPackages] = useState<Package[]>([])
   const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [showPkgForm, setShowPkgForm] = useState(false)
   const [showVtForm, setShowVtForm] = useState(false)
   const [editingVt, setEditingVt] = useState<VehicleType | null>(null)
   const [toast, setToast] = useState('')
-  const [pkgForm, setPkgForm] = useState({ name: '', description: '', price: '', stampValue: '1', color: '#0ea5e9', vehicleTypeId: '' })
-  const [vtForm, setVtForm] = useState({ name: '', icon: '🚗', washGoal: '8' })
+  const [pkgForm, setPkgForm] = useState({ name: '', description: '', price: '', stampValue: '1', color: '#0ea5e9', vehicle_type: '' })
+  const [vtForm, setVtForm] = useState({ name: '', icon: '🚗', wash_goal: '8' })
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   async function load() {
-    const [p, v] = await Promise.all([fetch('/api/packages').then(r=>r.json()), fetch('/api/vehicle-types').then(r=>r.json())])
-    if (p.success) setPackages(p.data)
-    if (v.success) setVehicleTypes(v.data)
-    setLoading(false)
+    setLoading(true)
+    setError(null)
+    try {
+      // 👇 Use centralized 'api' client with trailing slashes
+      const [pRes, vRes] = await Promise.all([
+        api.get('/packages/'),
+        api.get('/vehicle-types/')
+      ])
+      
+      // DRF returns arrays directly
+      setPackages(Array.isArray(pRes.data) ? pRes.data : [])
+      setVehicleTypes(Array.isArray(vRes.data) ? vRes.data : [])
+    } catch (err) {
+      console.error('Failed to load packages:', err)
+      setError('Unable to connect to the backend.')
+    } finally {
+      setLoading(false)
+    }
   }
+
   useEffect(() => { load() }, [])
 
   async function savePkg(e: React.FormEvent) {
     e.preventDefault()
-    const res = await fetch('/api/packages', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...pkgForm, price: Number(pkgForm.price), stampValue: Number(pkgForm.stampValue), vehicleTypeId: pkgForm.vehicleTypeId || null }) })
-    const data = await res.json()
-    if (data.success) { await load(); setShowPkgForm(false); setPkgForm({ name:'',description:'',price:'',stampValue:'1',color:'#0ea5e9',vehicleTypeId:'' }); showToast('✓ Package added') }
+    try {
+      await api.post('/packages/', {
+        name: pkgForm.name,
+        description: pkgForm.description || null,
+        price: Number(pkgForm.price),
+        stamp_value: Number(pkgForm.stampValue),
+        color: pkgForm.color,
+        vehicle_type: pkgForm.vehicle_type || null,
+        active: true
+      })
+      await load()
+      setShowPkgForm(false)
+      setPkgForm({ name:'', description:'', price:'', stampValue:'1', color:'#0ea5e9', vehicle_type:'' })
+      showToast('✓ Package added')
+    } catch (err) {
+      console.error('Failed to save package:', err)
+      showToast('✗ Failed to add package')
+    }
   }
 
   async function deletePkg(id: string) {
-    await fetch(`/api/packages/${id}`, { method: 'DELETE' }); await load(); showToast('Package removed')
+    try {
+      await api.delete(`/packages/${id}/`)
+      await load()
+      showToast('Package removed')
+    } catch (err) {
+      console.error('Failed to delete package:', err)
+      showToast('✗ Failed to remove package')
+    }
   }
 
   async function saveVt(e: React.FormEvent) {
     e.preventDefault()
-    if (editingVt) {
-      await fetch(`/api/vehicle-types/${editingVt.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(vtForm) })
-      showToast('✓ Vehicle type updated')
-    } else {
-      await fetch('/api/vehicle-types', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(vtForm) })
-      showToast('✓ Vehicle type added')
+    try {
+      if (editingVt) {
+        await api.patch(`/vehicle-types/${editingVt.id}/`, {
+          name: vtForm.name,
+          icon: vtForm.icon,
+          wash_goal: Number(vtForm.wash_goal)
+        })
+        showToast('✓ Vehicle type updated')
+      } else {
+        await api.post('/vehicle-types/', {
+          name: vtForm.name,
+          icon: vtForm.icon,
+          wash_goal: Number(vtForm.wash_goal)
+        })
+        showToast('✓ Vehicle type added')
+      }
+      await load()
+      setShowVtForm(false)
+      setEditingVt(null)
+      setVtForm({ name:'', icon:'🚗', wash_goal:'8' })
+    } catch (err) {
+      console.error('Failed to save vehicle type:', err)
+      showToast('✗ Failed to save vehicle type')
     }
-    await load(); setShowVtForm(false); setEditingVt(null); setVtForm({ name:'',icon:'🚗',washGoal:'8' })
   }
 
   const card: React.CSSProperties = { background: 'rgba(255,255,255,0.04)', border: '0.5px solid rgba(56,189,248,0.12)', borderRadius: 14, padding: '1.25rem 1.5rem', marginBottom: '1rem' }
   const inp: React.CSSProperties = { width: '100%', border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 8, padding: '10px 14px', fontSize: 14, background: '#0f2035', color: '#e8f4fd', outline: 'none', boxSizing: 'border-box' }
   const lbl: React.CSSProperties = { display: 'block', fontSize: 13, color: 'rgba(232,244,253,0.5)', marginBottom: 6 }
+
+  if (error) {
+    return <div style={{ padding: '3rem', textAlign: 'center', color: '#f87171' }}>⚠️ {error}</div>
+  }
 
   return (
     <div style={{ maxWidth: 700 }}>
@@ -64,17 +127,17 @@ export default function PackagesPage() {
       <div style={card}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           <h2 style={{ fontSize: 15, fontWeight: 600, color: '#e8f4fd', margin: 0 }}>🚗 Vehicle Types</h2>
-          <button onClick={() => { setShowVtForm(true); setEditingVt(null); setVtForm({ name:'',icon:'🚗',washGoal:'8' }) }} style={{ background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>+ Add type</button>
+          <button onClick={() => { setShowVtForm(true); setEditingVt(null); setVtForm({ name:'', icon:'🚗', wash_goal:'8' }) }} style={{ background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>+ Add type</button>
         </div>
         <p style={{ fontSize: 12, color: 'rgba(232,244,253,0.35)', margin: '0 0 1rem' }}>Each vehicle type has its own loyalty goal. Car = 8 washes, Motorcycle = 10 washes, etc.</p>
-        {loading ? null : vehicleTypes.map(vt => (
+        {loading ? <div style={{ color: 'rgba(232,244,253,0.3)', textAlign: 'center', padding: '1rem' }}>Loading...</div> : vehicleTypes.map(vt => (
           <div key={vt.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '0.5px solid rgba(56,189,248,0.07)' }}>
             <div style={{ width: 38, height: 38, borderRadius: 8, background: 'rgba(56,189,248,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>{vt.icon}</div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: '#e8f4fd' }}>{vt.name}</div>
-              <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)' }}>Goal: {vt.washGoal} washes for free wash</div>
+              <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)' }}>Goal: {vt.wash_goal} washes for free wash</div>
             </div>
-            <button onClick={() => { setEditingVt(vt); setVtForm({ name: vt.name, icon: vt.icon, washGoal: String(vt.washGoal) }); setShowVtForm(true) }}
+            <button onClick={() => { setEditingVt(vt); setVtForm({ name: vt.name, icon: vt.icon, wash_goal: String(vt.wash_goal) }); setShowVtForm(true) }}
               style={{ background: 'transparent', border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#38bdf8', cursor: 'pointer' }}>Edit</button>
           </div>
         ))}
@@ -87,12 +150,12 @@ export default function PackagesPage() {
           <button onClick={() => setShowPkgForm(true)} style={{ background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>+ Add package</button>
         </div>
         <p style={{ fontSize: 12, color: 'rgba(232,244,253,0.35)', margin: '0 0 1rem' }}>Premium packages can count as 2 stamps (e.g. Full Detail = 2 washes toward goal).</p>
-        {loading ? null : packages.filter(p => p.active).map(pkg => (
+        {loading ? <div style={{ color: 'rgba(232,244,253,0.3)', textAlign: 'center', padding: '1rem' }}>Loading...</div> : packages.filter(p => p.active).map(pkg => (
           <div key={pkg.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '0.5px solid rgba(56,189,248,0.07)' }}>
             <div style={{ width: 12, height: 38, borderRadius: 3, background: pkg.color, flexShrink: 0 }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: '#e8f4fd' }}>{pkg.name} <span style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)', fontWeight: 400 }}>· NPR {pkg.price}</span></div>
-              <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)' }}>{pkg.description} · {pkg.stampValue > 1 ? `${pkg.stampValue} stamps` : '1 stamp'} {pkg.vehicleType ? `· ${pkg.vehicleType.name}` : '· All vehicles'}</div>
+              <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)' }}>{pkg.description} · {pkg.stamp_value > 1 ? `${pkg.stamp_value} stamps` : '1 stamp'} {pkg.vehicle_type ? `· ${pkg.vehicle_type.name}` : '· All vehicles'}</div>
             </div>
             <button onClick={() => deletePkg(pkg.id)} style={{ background: 'transparent', border: '0.5px solid rgba(248,113,113,0.3)', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#f87171', cursor: 'pointer' }}>Remove</button>
           </div>
@@ -115,7 +178,7 @@ export default function PackagesPage() {
                 <div><label style={lbl}>Stamp value</label><input type="number" min={1} max={5} value={pkgForm.stampValue} onChange={e => setPkgForm(p=>({...p,stampValue:e.target.value}))} style={inp} /></div>
               </div>
               <div><label style={lbl}>Vehicle type (optional)</label>
-                <select value={pkgForm.vehicleTypeId} onChange={e => setPkgForm(p=>({...p,vehicleTypeId:e.target.value}))} style={{ ...inp }}>
+                <select value={pkgForm.vehicle_type} onChange={e => setPkgForm(p=>({...p,vehicle_type:e.target.value}))} style={{ ...inp }}>
                   <option value="">All vehicle types</option>
                   {vehicleTypes.map(vt => <option key={vt.id} value={vt.id}>{vt.icon} {vt.name}</option>)}
                 </select>
@@ -146,7 +209,7 @@ export default function PackagesPage() {
                   {VT_ICONS.map(ic => <button key={ic} type="button" onClick={() => setVtForm(p=>({...p,icon:ic}))} style={{ width: 36, height: 36, borderRadius: 8, background: vtForm.icon === ic ? 'rgba(56,189,248,0.2)' : 'rgba(255,255,255,0.05)', border: `1.5px solid ${vtForm.icon === ic ? '#38bdf8' : 'transparent'}`, fontSize: 18, cursor: 'pointer' }}>{ic}</button>)}
                 </div>
               </div>
-              <div><label style={lbl}>Wash goal (for free wash)</label><input type="number" min={1} max={50} value={vtForm.washGoal} onChange={e => setVtForm(p=>({...p,washGoal:e.target.value}))} style={inp} /></div>
+              <div><label style={lbl}>Wash goal (for free wash)</label><input type="number" min={1} max={50} value={vtForm.wash_goal} onChange={e => setVtForm(p=>({...p,wash_goal:e.target.value}))} style={inp} /></div>
               <button type="submit" style={{ background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8, padding: '12px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>{editingVt ? 'Save changes' : 'Add vehicle type'}</button>
             </form>
           </div>

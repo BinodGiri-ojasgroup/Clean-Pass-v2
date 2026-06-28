@@ -47,12 +47,14 @@ export default function LoginPage() {
   };
 
   // 2. Google Authentication Success Callback Handler
+    // 2. Google Authentication Success Callback Handler
   const handleGoogleSuccess = async (credentialResponse: any) => {
     setLoading(true);
     setError('');
     try {
+      // 👇 CHANGED: Send 'credential' instead of 'token'
       const response = await axios.post('http://127.0.0.1:8000/api/auth/google/', {
-        token: credentialResponse.credential,
+        credential: credentialResponse.credential, 
       });
 
       if (response.data?.success) {

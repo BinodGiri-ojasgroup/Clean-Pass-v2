@@ -1,39 +1,50 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import api from '@/lib/api' // 👈 Import the centralized API client
 
-interface Stats { totalVehicles: number; totalWashes: number; totalRedemptions: number; pendingRequests: number; todayWashes: number; unpaidWashes: number; upcomingAppts: number; revenue30d: number; days7: {date:string;count:number}[] }
+interface Stats { 
+  totalVehicles: number; 
+  totalWashes: number; 
+  totalRedemptions: number; 
+  pendingRequests: number; 
+  todayWashes: number; 
+  unpaidWashes: number; 
+  upcomingAppts: number; 
+  revenue30d: number; 
+  days7: {date:string;count:number}[] 
+}
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [error, setError] = useState<string>('')
 
   useEffect(() => {
-    const token = localStorage.getItem('access_token')
-    
-    // Explicitly target your Django backend server (port 8000)
-    fetch('http://127.0.0.1:8000/api/auth/dashboard/stats/', {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}` // Pass JWT access token to authenticate request
-      }
-    })
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP Error: ${r.status}`)
-        return r.json()
-      })
-      .then(d => { 
-        if (d.success) {
-          setStats(d.data) 
+    const fetchStats = async () => {
+      try {
+        // 🚨 Updated: Uses the centralized 'api' client and the correct backend route '/summary/'
+        // The JWT interceptor automatically attaches the Bearer token from localStorage
+        const response = await api.get('/summary/')
+        
+        if (response.data.success) {
+          setStats(response.data.data) 
         } else {
-          setError(d.error || 'Failed to parse dashboard data.')
+          setError(response.data.error || 'Failed to parse dashboard data.')
         }
-      })
-      .catch(err => {
+      } catch (err: any) {
         console.error('Dashboard fetch error:', err)
-        setError('Unable to link with backend system.')
-      })
+        
+        // Handle 401 Unauthorized (Fallback if the interceptor fails to refresh the token)
+        if (err.response?.status === 401) {
+           setError('Session expired. Redirecting to login...')
+           setTimeout(() => window.location.href = '/login-page', 2000)
+        } else {
+           setError('Unable to link with backend system.')
+        }
+      }
+    }
+
+    fetchStats()
   }, [])
 
   const theme = '#38bdf8'
@@ -43,7 +54,21 @@ export default function DashboardPage() {
   if (!stats) return <div style={{ color: 'rgba(232,244,253,0.3)', padding: '3rem', textAlign: 'center' }}>Loading…</div>
 
   const maxDay = Math.max(...stats.days7.map(d => d.count), 1)
-
+  async function handleLogout() {
+    try {
+      // 1. Tell the backend we are logging out (optional, but good for tracking)
+      await api.post('/auth/logout/')
+    } catch (err) {
+      console.error("Logout API failed, but continuing to clear tokens...")
+    } finally {
+      // 2. CRITICAL: Clear tokens from localStorage
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('refresh_token')
+      
+      // 3. Redirect to login page
+      window.location.href = '/login-page'
+    }
+  }
   return (
     <div style={{ maxWidth: 900 }}>
       <div style={{ marginBottom: '2rem' }}>

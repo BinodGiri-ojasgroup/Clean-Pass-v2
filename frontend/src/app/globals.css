@@ -1,15 +1,13 @@
 @import "tailwindcss";
 
-/* Delete anything underneath these lines if it is overriding your background colors */
-
 :root {
   --background: #ffffff;
   --foreground: #0f172a;
 }
 
 html {
-  scroll-behavior: smooth;
-  scroll-padding-top: 80px; /* Prevents the sticky navbar from hiding element headings when jumping down */
+  /* Removed scroll-behavior: smooth; to fix Next.js App Router warning */
+  scroll-padding-top: 80px; /* Keeps sticky navbar from hiding headings */
 }
 
 body {

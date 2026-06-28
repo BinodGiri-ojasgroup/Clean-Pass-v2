@@ -39,12 +39,14 @@ export default function RegisterPage() {
   }
 
   // 2. Google Authentication Success Callback Handler
+    // 2. Google Authentication Success Callback Handler
   const handleGoogleSuccess = async (credentialResponse: any) => {
     setLoading(true);
     setError('');
     try {
+      // 👇 CHANGED: Send 'credential' instead of 'token'
       const response = await axios.post('http://127.0.0.1:8000/api/auth/google/', {
-        token: credentialResponse.credential,
+        credential: credentialResponse.credential,
       });
 
       if (response.data?.success) {
@@ -53,9 +55,9 @@ export default function RegisterPage() {
         localStorage.setItem('refresh_token', payload.refresh);
         
         if (payload.isNewShop) {
-          router.push('/dashboard/settings');
+          router.push('/dashboard/settings/');
         } else {
-          router.push('/dashboard');
+          router.push('/dashboard/');
         }
       } else {
         setError(response.data?.error || 'Authentication rejected by backend.');

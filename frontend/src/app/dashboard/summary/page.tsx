@@ -1,7 +1,16 @@
 'use client'
 import { useEffect, useState } from 'react'
+import api from '@/lib/api'
 
-interface Summary { date: string; totalWashes: number; totalRevenue: number; totalUnpaid: number; redeemed: number; byMethod: Record<string, { count: number; amount: number }>; byWorker: { name: string; count: number; commission: number }[] }
+interface Summary { 
+  date: string
+  totalWashes: number
+  totalRevenue: number
+  totalUnpaid: number
+  redeemed: number
+  byMethod: Record<string, { count: number; amount: number }>
+  byWorker: { name: string; count: number; commission: number }[]
+}
 
 const METHOD_CONFIG: Record<string, { label: string; color: string; emoji: string }> = {
   cash:   { label: 'Cash',    color: '#22c55e', emoji: '💵' },
@@ -16,18 +25,52 @@ export default function SummaryPage() {
   const [date, setDate] = useState(today)
   const [data, setData] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function load(d: string) {
     setLoading(true)
-    const res = await fetch(`/api/summary?date=${d}`); const json = await res.json()
-    if (json.success) setData(json.data)
-    setLoading(false)
+    setError(null)
+    try {
+      // 👇 Use centralized api client with trailing slash
+      const res = await api.get(`/daily-summary/?date=${d}`)
+      if (res.data.success) {
+        setData(res.data.data)
+      } else {
+        setError('Failed to load summary data.')
+      }
+    } catch (err) {
+      console.error('Failed to fetch daily summary:', err)
+      setError('Unable to connect to the backend.')
+    } finally {
+      setLoading(false)
+    }
   }
-  useEffect(() => { load(date) }, [date])
 
-  const card: React.CSSProperties = { background: 'rgba(255,255,255,0.04)', border: '0.5px solid rgba(56,189,248,0.12)', borderRadius: 14, padding: '1.25rem 1.5rem', marginBottom: '1rem' }
+  useEffect(() => { 
+    load(date) 
+  }, [date])
 
-  const totalCollection = data ? Object.entries(data.byMethod).filter(([m]) => m !== 'credit' && m !== 'free').reduce((s, [, v]) => s + v.amount, 0) : 0
+  const card: React.CSSProperties = { 
+    background: 'rgba(255,255,255,0.04)', 
+    border: '0.5px solid rgba(56,189,248,0.12)', 
+    borderRadius: 14, 
+    padding: '1.25rem 1.5rem', 
+    marginBottom: '1rem' 
+  }
+
+  const totalCollection = data 
+    ? Object.entries(data.byMethod)
+        .filter(([m]) => m !== 'credit' && m !== 'free')
+        .reduce((s, [, v]) => s + v.amount, 0) 
+    : 0
+
+  if (error) {
+    return (
+      <div style={{ padding: '3rem', textAlign: 'center', color: '#f87171' }}>
+        ⚠️ {error}
+      </div>
+    )
+  }
 
   return (
     <div style={{ maxWidth: 680 }}>
@@ -36,11 +79,18 @@ export default function SummaryPage() {
           <h1 style={{ fontFamily: 'Georgia, serif', fontSize: 26, fontWeight: 700, color: '#e8f4fd', margin: 0 }}>Daily Summary</h1>
           <p style={{ color: 'rgba(232,244,253,0.4)', fontSize: 14, marginTop: 4 }}>End-of-day payment breakdown</p>
         </div>
-        <input type="date" value={date} max={today} onChange={e => setDate(e.target.value)}
-          style={{ border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 8, padding: '9px 14px', fontSize: 14, background: '#0c1a2e', color: '#e8f4fd', outline: 'none' }} />
+        <input 
+          type="date" 
+          value={date} 
+          max={today} 
+          onChange={e => setDate(e.target.value)}
+          style={{ border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 8, padding: '9px 14px', fontSize: 14, background: '#0c1a2e', color: '#e8f4fd', outline: 'none' }} 
+        />
       </div>
 
-      {loading || !data ? <div style={{ color: 'rgba(232,244,253,0.3)', textAlign: 'center', padding: '3rem' }}>Loading…</div> : (
+      {loading || !data ? (
+        <div style={{ color: 'rgba(232,244,253,0.3)', textAlign: 'center', padding: '3rem' }}>Loading…</div>
+      ) : (
         <>
           {/* Top stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px,1fr))', gap: '0.75rem', marginBottom: '1rem' }}>

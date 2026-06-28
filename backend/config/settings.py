@@ -21,8 +21,8 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt',
     'corsheaders',
     'washstation',
-    'payments',
-    'reports',
+    #'payments',
+    #'reports',
 ]
 
 MIDDLEWARE = [
@@ -114,3 +114,5 @@ GOOGLE_CLIENT_ID = os.environ.get(
     'GOOGLE_CLIENT_ID', 
     '649254033532-s5tteoe027ka0cienra609uulfk1lmvo.apps.googleusercontent.com'
 )
+
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
