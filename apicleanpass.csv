@@ -1,0 +1,15 @@
+﻿Endpoint,Method,What it does
+/api/auth/register/,POST,Registers a new user and creates their Washstation.
+/api/auth/login/,POST,Logs in a user and returns JWT tokens.
+/api/auth/google/,POST,Handles Google OAuth login.
+/api/auth/refresh/,POST,Refreshes an expired JWT token.
+/api/auth/logout/,POST,Logs the user out.
+/api/shops/me/,GET,Fetches the current shop's settings.
+/api/shops/me/,POST,Onboarding: Creates the shop for a new Google login user.
+/api/shops/me/,PATCH,"Updates shop settings (WiFi, Branding, SMS)."
+/api/summary/,GET,"Fetches dashboard stats (Revenue, Total Washes, etc.)."
+/api/washstations/queue/,GET,Fetches the live queue of active washes.
+/api/auth/workers/,GET,Fetches the list of active workers for assignment.
+/api/qr/,GET,"Generates the real, scannable QR code for the shop."
+/api/reports/,GET,Fetches financial reports (or downloads a CSV if ?format=csv).
+/api/public/wash-requests/<uuid:shop_id>/,POST,Public: Allows a customer scanning the QR code to request a wash without logging in.
