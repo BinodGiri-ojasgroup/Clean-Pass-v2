@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
 import api from '@/lib/api' 
+import { formatPhone, normalizePhone, isValidNepaliPhone } from '@/lib/phone'
 
 interface ShopData { 
   id: string; name: string; email: string; address: string|null; phone: string|null; 
@@ -47,6 +48,7 @@ export default function SettingsPage() {
   
   const [form, setForm] = useState({ name:'', address:'', phone:'' })
   const [shopLogo, setShopLogo] = useState('')
+  const [shopLogoFile, setShopLogoFile] = useState<File | null>(null)
   const [themeColor, setThemeColor] = useState('#0ea5e9')
   const [wifiForm, setWifiForm] = useState({ wifiName:'', wifiPassword:'', wifiType:'WPA', wifiHidden: false })
   const [smsForm, setSmsForm] = useState({ smsEnabled: false, smsApiKey:'', smsSenderId:'CleanPass' })
@@ -84,15 +86,55 @@ export default function SettingsPage() {
     fetchShop()
   }, [])
 
+  function handlePhoneChange(value: string) {
+    // Only allow digits, spaces, parentheses, hyphens
+    const cleaned = value.replace(/[^\d\s\-().]/g, '')
+    setForm(p => ({ ...p, phone: cleaned }))
+  }
+  
+  function handleSetupPhoneChange(value: string) {
+    // Only allow digits, spaces, parentheses, hyphens
+    const cleaned = value.replace(/[^\d\s\-().]/g, '')
+    setSetupForm(p => ({ ...p, phone: cleaned }))
+  }
+  
   // 👇 NEW FUNCTION: Handles the initial creation of the shop
   async function handleInitialSetup(e: React.FormEvent) {
     e.preventDefault()
+    // Validate phone number if provided
+    if (setupForm.phone.trim() && !isValidNepaliPhone(setupForm.phone)) {
+      showSaved('⚠ Please enter a valid Nepali phone number')
+      setSaving(false)
+      return
+    }
     setSaving(true)
+    const payload = { ...setupForm }
+    if (payload.phone) payload.phone = normalizePhone(payload.phone)
     try {
-      const res = await api.post('/shops/me/', setupForm)
+      const res = await api.post('/shops/me/', payload)
       if (res.data.success) {
         const mappedData = mapApiToState(res.data.data)
         setShop(mappedData)
+        // Update all form states with the newly created shop data!
+        setForm({ name: mappedData.name, address: mappedData.address || '', phone: mappedData.phone || '' })
+        setShopLogo(mappedData.shopLogo || '')
+        setThemeColor(mappedData.themeColor || '#0ea5e9')
+        setWifiForm({ 
+          wifiName: mappedData.wifiName || '', 
+          wifiPassword: mappedData.wifiPassword || '', 
+          wifiType: mappedData.wifiType || 'WPA', 
+          wifiHidden: mappedData.wifiHidden || false 
+        })
+        setSmsForm({ 
+          smsEnabled: mappedData.smsEnabled || false, 
+          smsApiKey: mappedData.smsApiKey || '', 
+          smsSenderId: mappedData.smsSenderId || 'CleanPass' 
+        })
+        // Also try to fetch and set QR code
+        try { 
+          const qrRes = await api.get('/qr/'); 
+          if(qrRes.data.success) setQrData(qrRes.data.data) 
+        } catch(e) {}
         setNeedsSetup(false) // Switch to normal settings view
         showSaved('✓ Shop created successfully!')
       }
@@ -108,8 +150,25 @@ export default function SettingsPage() {
   async function saveSection(data: Record<string,unknown>, label: string) {
     setSaving(true)
     try {
-      const payload = mapStateToApi(data)
-      const res = await api.patch('/shops/me/', payload)
+      let res;
+      if (label === 'Branding') {
+        const formData = new FormData()
+        formData.append('theme_color', themeColor)
+        if (shopLogoFile) {
+          formData.append('washstation_logo', shopLogoFile)
+        }
+        res = await api.patch('/shops/me/', formData)
+        // Clear the file after successful save
+        setShopLogoFile(null)
+      } else {
+        const payload = mapStateToApi(data)
+        // Normalize phone if present
+        if (payload.phone) payload.phone = normalizePhone(String(payload.phone))
+        res = await api.patch('/shops/me/', payload, {
+          headers: { 'Content-Type': 'application/json' }
+        })
+      }
+      
       if (res.data.success) {
         showSaved(`✓ ${label} saved`)
         setShop(mapApiToState(res.data.data))
@@ -129,6 +188,7 @@ export default function SettingsPage() {
     const reader = new FileReader()
     reader.onload = ev => setShopLogo(ev.target?.result as string)
     reader.readAsDataURL(file)
+    setShopLogoFile(file)
   }
 
   async function generateQR() {
@@ -162,7 +222,7 @@ export default function SettingsPage() {
             </div>
             <div>
               <label style={lbl}>Phone</label>
-              <input style={inp} value={setupForm.phone} onChange={e => setSetupForm(p=>({...p, phone:e.target.value}))} placeholder="98XXXXXXXX" />
+              <input style={inp} value={setupForm.phone} onChange={e => handleSetupPhoneChange(e.target.value)} placeholder="98 XXXX XXXX" maxLength={14} inputMode="numeric" />
             </div>
             <div>
               <label style={lbl}>Address</label>
@@ -208,7 +268,7 @@ export default function SettingsPage() {
             <div style={{ display: 'flex', gap: 8 }}>
               <input ref={logoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleLogo} />
               <button type="button" onClick={() => logoRef.current?.click()} style={{ background: 'rgba(255,255,255,0.05)', border: '0.5px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '7px 14px', fontSize: 12, color: 'rgba(232,244,253,0.6)', cursor: 'pointer' }}>{shopLogo ? 'Change' : 'Upload'}</button>
-              {shopLogo && <button type="button" onClick={() => setShopLogo('')} style={{ background: 'transparent', border: 'none', fontSize: 12, color: '#f87171', cursor: 'pointer' }}>Remove</button>}
+              {shopLogo && <button type="button" onClick={() => { setShopLogo(''); setShopLogoFile(null); }} style={{ background: 'transparent', border: 'none', fontSize: 12, color: '#f87171', cursor: 'pointer' }}>Remove</button>}
             </div>
           </div>
         </div>
@@ -228,7 +288,7 @@ export default function SettingsPage() {
         <div style={{ display: 'grid', gap: '1rem', marginBottom: '1.25rem' }}>
           <div><label style={lbl}>Station Name</label><input style={inp} value={form.name} onChange={e => setForm(p=>({...p,name:e.target.value}))} /></div>
           <div><label style={lbl}>Email (cannot change)</label><input style={{ ...inp, opacity: 0.4 }} value={shop.email} disabled /></div>
-          <div><label style={lbl}>Phone</label><input style={inp} value={form.phone} onChange={e => setForm(p=>({...p,phone:e.target.value}))} placeholder="98XXXXXXXX" /></div>
+          <div><label style={lbl}>Phone</label><input style={inp} value={form.phone} onChange={e => handlePhoneChange(e.target.value)} placeholder="98 XXXX XXXX" maxLength={14} inputMode="numeric" /></div>
           <div><label style={lbl}>Address</label><input style={inp} value={form.address} onChange={e => setForm(p=>({...p,address:e.target.value}))} placeholder="Thamel, Kathmandu" /></div>
         </div>
         <button type="button" onClick={() => saveSection(form, 'Shop info')} style={btn()}>Save info</button>

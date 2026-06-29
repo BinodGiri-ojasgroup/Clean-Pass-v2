@@ -1,5 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
+import api from '@/lib/api'
+import { formatPhone, normalizePhone, isValidNepaliPhone } from '@/lib/phone'
 
 interface Worker { id: string; name: string; phone: string | null; pin: string; commission: number; washesThisMonth: number; revenueThisMonth: number; commissionEarned: number; activeShift: { clockIn: string } | null; shiftsThisWeek: number }
 
@@ -14,33 +16,52 @@ export default function WorkersPage() {
   function showToast(m: string) { setToast(m); setTimeout(() => setToast(''), 3000) }
 
   async function load() {
-    const res = await fetch('/api/workers'); const data = await res.json()
-    if (data.success) setWorkers(data.data)
+    const res = await api.get('/workers/');
+    if (res.data.success) setWorkers(res.data.data)
     setLoading(false)
   }
   useEffect(() => { load() }, [])
 
   async function save(e: React.FormEvent) {
     e.preventDefault()
+    // Validate phone number if provided
+    if (form.phone.trim() && !isValidNepaliPhone(form.phone)) {
+      showToast('⚠ Please enter a valid Nepali phone number (10 digits starting with 9)')
+      return
+    }
+    const payload = { ...form }
+    if (form.phone) payload.phone = normalizePhone(form.phone)
     if (editing) {
-      await fetch(`/api/workers/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+      await api.patch(`/workers/${editing.id}/`, payload, {
+        headers: { 'Content-Type': 'application/json' }
+      })
       showToast('✓ Worker updated')
     } else {
-      await fetch('/api/workers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
+      await api.post('/workers/', payload, {
+        headers: { 'Content-Type': 'application/json' }
+      })
       showToast('✓ Worker added')
     }
     await load(); setShowForm(false); setEditing(null); setForm({ name:'', phone:'', pin:'', commission:'0' })
   }
 
+  function handlePhoneChange(value: string) {
+    // Only allow digits, spaces, parentheses, hyphens
+    const cleaned = value.replace(/[^\d\s\-().]/g, '')
+    setForm(p => ({ ...p, phone: cleaned }))
+  }
+
   async function clockAction(worker: Worker, action: 'in' | 'out') {
-    await fetch('/api/workers/shift', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workerId: worker.id, action }) })
+    await api.post('/workers/shift/', { workerId: worker.id, action }, {
+      headers: { 'Content-Type': 'application/json' }
+    })
     showToast(action === 'in' ? `✓ ${worker.name} clocked in` : `✓ ${worker.name} clocked out`)
     await load()
   }
 
   async function removeWorker(id: string) {
     if (!confirm('Remove this worker?')) return
-    await fetch(`/api/workers/${id}`, { method: 'DELETE' })
+    await api.delete(`/workers/${id}/`)
     await load(); showToast('Worker removed')
   }
 
@@ -131,7 +152,7 @@ export default function WorkersPage() {
             </div>
             <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div><label style={lbl}>Name *</label><input value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} required style={inp} placeholder="Bikash Tamang" /></div>
-              <div><label style={lbl}>Phone</label><input value={form.phone} onChange={e=>setForm(p=>({...p,phone:e.target.value}))} style={inp} placeholder="98XXXXXXXX" /></div>
+              <div><label style={lbl}>Phone</label><input value={form.phone} onChange={e=>handlePhoneChange(e.target.value)} style={inp} placeholder="98 XXXX XXXX" maxLength={14} inputMode="numeric" /></div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                 <div><label style={lbl}>PIN (4 digits)</label><input type="number" maxLength={4} value={form.pin} onChange={e=>setForm(p=>({...p,pin:e.target.value.slice(0,4)}))} style={inp} placeholder="0000" /></div>
                 <div><label style={lbl}>Commission (NPR/wash)</label><input type="number" min={0} value={form.commission} onChange={e=>setForm(p=>({...p,commission:e.target.value}))} style={inp} placeholder="0" /></div>

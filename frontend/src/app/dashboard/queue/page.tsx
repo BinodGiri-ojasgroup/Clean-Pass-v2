@@ -12,6 +12,15 @@ interface WashCard {
   notes: string | null
 }
 interface Worker { id: string; name: string }
+interface Summary {
+  date: string
+  totalWashes: number
+  totalRevenue: number
+  totalUnpaid: number
+  redeemed: number
+  byMethod: Record<string, { count: number; amount: number }>
+  byWorker: { name: string; count: number; commission: number }[]
+}
 
 const PAYMENT_METHODS = [
   { key: 'cash',   label: 'Cash',      color: '#22c55e', emoji: '💵' },
@@ -49,12 +58,12 @@ function WashCardItem({ card, cfg, workers, onMove, onUpdate, acting }: {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
         <div>
           <div style={{ fontSize: 16, fontWeight: 700, color: cfg.color, fontFamily: 'monospace', letterSpacing: 0.5 }}>{card.plateNo}</div>
-          <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginTop: 1 }}>
+          <div style={{ fontSize: 11, color: 'rgba(0, 0, 0, 0.4)', marginTop: 1 }}>
             {card.vehicleType.icon} {card.vehicleType.name}{card.customerName ? ` · ${card.customerName}` : ''}
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 10, color: 'rgba(232,244,253,0.35)' }}>{waiting}</div>
+          <div style={{ fontSize: 10, color: 'rgba(0, 0, 0, 0.35)' }}>{waiting}</div>
           {card.packageName && <div style={{ fontSize: 11, color: card.packageColor || cfg.color, fontWeight: 500, marginTop: 2 }}>{card.packageName}{card.packagePrice ? ` — NPR ${card.packagePrice}` : ''}</div>}
         </div>
       </div>
@@ -62,7 +71,7 @@ function WashCardItem({ card, cfg, workers, onMove, onUpdate, acting }: {
       {workers.length > 0 && (
         <div style={{ marginBottom: 8 }}>
           <select value={card.worker?.id || ''} onChange={e => onUpdate(card.id, { workerId: e.target.value || null })}
-            style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '0.5px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '5px 8px', fontSize: 11, color: card.worker ? '#e8f4fd' : 'rgba(232,244,253,0.35)', outline: 'none' }}>
+            style={{ width: '100%', background: 'rgba(255,255,255,0.06)', border: '0.5px solid rgba(255,255,255,0.1)', borderRadius: 6, padding: '5px 8px', fontSize: 11, color: '#000000', outline: 'none' }}>
             <option value="">Assign worker…</option>
             {workers.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
@@ -91,28 +100,32 @@ function WashCardItem({ card, cfg, workers, onMove, onUpdate, acting }: {
 export default function QueuePage() {
   const [cards, setCards] = useState<WashCard[]>([])
   const [workers, setWorkers] = useState<Worker[]>([])
+  const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
   const [payModal, setPayModal] = useState<WashCard | null>(null)
   const [actingId, setActingId] = useState<string | null>(null)
   const [toast, setToast] = useState('')
+  const today = new Date().toISOString().split('T')[0]
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
   // 📡 Fetches datasets cleanly from Django REST Framework
   const fetchQueue = useCallback(async () => {
     try {
-      const [qRes, wRes] = await Promise.all([
+      const [qRes, wRes, sRes] = await Promise.all([
         api.get('washstations/queue/'), 
-        api.get('auth/workers/')
+        api.get('auth/workers/'),
+        api.get(`/daily-summary/?date=${today}`)
       ])
       if (qRes.data.success) setCards(qRes.data.data)
       if (wRes.data.success) setWorkers(wRes.data.data)
+      if (sRes.data.success) setSummary(sRes.data.data)
     } catch (err) {
       console.error("Error communicating with Django Queue endpoints:", err)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [today])
 
   useEffect(() => {
     fetchQueue()
@@ -123,7 +136,9 @@ export default function QueuePage() {
   // 📝 Sends a secure PATCH update straight to Django
   async function updateCard(id: string, data: Record<string, unknown>) {
     try {
-      await api.patch(`queue/${id}/`, data)
+      await api.patch(`washstations/queue/${id}/`, data, {
+        headers: { 'Content-Type': 'application/json' }
+      })
       await fetchQueue()
     } catch (err) {
       console.error("Error patching card state via Django:", err)
@@ -193,7 +208,29 @@ export default function QueuePage() {
 
           <div style={{ flex: 1, minWidth: 260, background: 'rgba(34,197,94,0.05)', border: '0.5px solid rgba(34,197,94,0.15)', borderRadius: 14, padding: '1rem' }}>
             <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>✓ Done today</div>
-            <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.3)', textAlign: 'center', padding: '1rem 0' }}>See Daily Summary for completed washes</div>
+            {summary ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, color: 'rgba(232,244,253,0.5)' }}>Total washes</span>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: '#22c55e', fontFamily: 'Georgia, serif' }}>{summary.totalWashes}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, color: 'rgba(232,244,253,0.5)' }}>Cash collected</span>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: '#22c55e', fontFamily: 'Georgia, serif' }}>
+                    NPR {Object.entries(summary.byMethod)
+                      .filter(([m]) => m !== 'credit' && m !== 'free')
+                      .reduce((s, [, v]) => s + v.amount, 0)
+                      .toLocaleString()}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 12, color: 'rgba(232,244,253,0.5)' }}>Unpaid</span>
+                  <span style={{ fontSize: 16, fontWeight: 700, color: '#f87171', fontFamily: 'Georgia, serif' }}>NPR {summary.totalUnpaid.toLocaleString()}</span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.3)', textAlign: 'center', padding: '1rem 0' }}>Loading summary…</div>
+            )}
           </div>
         </div>
       )}

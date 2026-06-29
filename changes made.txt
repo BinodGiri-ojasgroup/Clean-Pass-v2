@@ -1,0 +1,143 @@
+Clean Pass Dashboard - Changes Made
+==================================
+
+Backend Changes:
+----------------
+1. washstation/views.py:
+   - Updated WorkerViewSet to list workers with extra stats (washesThisMonth, revenueThisMonth, commissionEarned, shiftsThisWeek, activeShift)
+   - Updated CustomerViewSet to include customers with their vehicles
+   - Updated VehicleViewSet to list vehicles with extra fields (activeWashes, unpaidWashes, isRewardReady) and support partial updates (mark paid, adjust washes)
+   - Updated AppointmentViewSet to list appointments with date filtering
+   - Added WorkerShiftView to handle clock in/clock out actions
+   - Updated LiveWashQueueView to return detailed wash cards with vehicle, package, worker info and support PATCH for updating wash status/worker
+   - Added WashRequestsView to handle approving/rejecting wash requests and creating new washes, with error handling for missing packages
+   - Fixed WashRequestsView: Removed 'customer' argument from Wash.objects.create() as Wash model doesn't have a customer field
+   - Updated VehicleViewSet to handle cases where vehicleType or customer are null by providing default fallback objects
+   - Added PublicCustomerView: Public endpoint to fetch customer's loyalty card info, uses shopId as path param, returns exists, vehicle, customer, activeWashes, washGoal, isRewardReady, and vehicles list
+   - Added PublicTrackView: Public endpoint to track wash status, uses shopId as path param, returns activeWash, queuePosition, activeStamps, washGoal, isRewardReady, recentWashes
+   - Updated PublicCustomerView to include more data: totalWashes, totalRedemptions, unpaidCount, history, and shop info for MyCard view
+
+2. config/urls.py:
+   - Added WorkerShiftView at /api/workers/shift/
+   - Added WashRequestsView at /api/requests/ and /api/requests/<uuid:pk>/
+   - Updated LiveWashQueueView to support uuid pk in URL
+   - Added PublicCustomerView at /api/public/customer/<uuid:shop_id>/
+   - Added PublicTrackView at /api/public/track/<uuid:shop_id>/
+
+3. washstation/serializers.py:
+   - Updated WashRequestSerializer to return fields in camelCase (plateNo instead of plate_no, createdAt instead of created_at) to match frontend expectations
+   - Updated WashRequestSerializer to include package details (WashPackageSerializer)
+   - Updated VehicleTypeSerializer to return washGoal instead of wash_goal
+   - Updated ShiftSerializer to return clockIn and clockOut instead of clock_in and clock_out
+   - Updated CustomerSerializer to return createdAt instead of created_at
+   - Updated VehicleSerializer to return plateNo, vehicleType, createdAt instead of plate_no, vehicle_type, created_at
+   - Updated WashSerializer to return paymentMethod, createdAt, washStartAt, washDoneAt instead of payment_method, created_at, wash_start_at, wash_done_at
+   - Updated AppointmentSerializer to return timeSlot instead of time_slot, added vehicle, package, and createdAt
+
+Frontend Changes:
+-----------------
+1. src/app/dashboard/workers/page.tsx:
+   - Updated to use the centralized api client
+   - Updated API endpoints to use correct DRF-style trailing slashes
+   - Updated load, save, clockAction, removeWorker functions
+
+2. src/app/dashboard/queue/page.tsx:
+   - Fixed updateCard to use correct washstations/queue/<id>/ endpoint
+
+3. src/app/dashboard/approvals/page.tsx:
+   - Updated to use the centralized api client
+   - Updated API endpoints to use correct DRF-style trailing slashes
+
+4. src/app/dashboard/customers/page.tsx:
+   - Updated to use the centralized api client
+   - Updated API endpoints to use correct DRF-style trailing slashes
+   - Added api import
+   - Changed fetch to api.get, params properly set
+
+5. src/app/dashboard/vehicles/page.tsx:
+   - Updated to use the centralized api client
+   - Updated API endpoints to use correct DRF-style trailing slashes
+   - Added api import
+   - Changed all fetch calls to use api.get/api.patch
+   - Properly updated endpoints to include trailing slashes
+
+6. src/app/dashboard/appointments/page.tsx:
+   - Updated to use the centralized api client
+   - Updated API endpoints to use correct DRF-style trailing slashes
+   - Added api import
+   - Changed all fetch calls to use api.get/api.patch/api.delete
+
+7. src/app/register-page/page.tsx:
+   - Changed Google login button text from "Sign in with Google" to "Sign up with Google" using `text="signup_with"` prop
+
+8. src/app/dashboard/settings/page.tsx:
+   - Updated handleInitialSetup() to update all form states (setForm, setShopLogo, setThemeColor, setWifiForm, setSmsForm) with the newly created shop data
+   - Added fetching of QR code after shop creation to setQrData()
+
+9. washstation/views.py:
+   - Updated PublicShopInfoView to return WiFi details (wifiName, wifiPassword, wifiType, wifiHidden)
+
+10. src/app/scan/[shopId]/page.tsx:
+    - Updated ShopInfo interface to include WiFi fields
+    - Added a WiFi card that displays a QR code (using api.qrserver.com) and WiFi SSID/password if available
+
+11. src/app/dashboard/queue/page.tsx:
+    - Added Summary interface for daily summary data
+    - Added summary state and today variable
+    - Updated fetchQueue to also fetch daily summary from /daily-summary/?date=<today>
+    - Updated "Done today" section to display total washes, cash collected, and unpaid amount using summary data
+
+12. src/lib/phone.ts:
+    - Added formatPhone() function that formats valid Nepali phone numbers as "98 XXXX XXXX"
+    - Added isValidNepaliPhone() function that validates phone numbers have exactly 10 digits and start with 9
+
+13. src/app/dashboard/workers/page.tsx:
+    - Imported phone utilities from @/lib/phone
+    - Added handlePhoneChange() function that only allows numeric characters, spaces, hyphens, and parentheses in phone inputs
+    - Added validation to save() function to ensure valid Nepali phone numbers are provided
+    - Updated form's phone input to use handlePhoneChange, added placeholder, maxLength, and inputMode="numeric"
+
+14. src/app/dashboard/settings/page.tsx:
+    - Imported phone utilities from @/lib/phone
+    - Added handlePhoneChange() and handleSetupPhoneChange() for both setup and regular settings forms
+    - Added phone number validation to handleInitialSetup() and phone number normalization to saveSection()
+    - Updated phone inputs in both setup and regular shop info forms
+
+15. src/app/register-page/page.tsx:
+    - Imported phone utilities from @/lib/phone
+    - Added handlePhoneChange() function to restrict allowed characters
+    - Added phone number validation in handleSubmit()
+    - Updated phone input placeholder, maxLength, and inputMode
+
+16. src/app/book/[shopId]/page.tsx:
+    - Imported phone utilities from @/lib/phone
+    - Added handlePhoneChange() function
+    - Added phone number validation and normalization in handleSubmit()
+    - Updated phone input to use handlePhoneChange with proper placeholder and attributes
+
+17. src/app/scan/[shopId]/page.tsx:
+    - Imported phone utilities from @/lib/phone
+    - Added handlePhoneChange() and handleComboInputChange() (for inputs accepting both phone and plate)
+    - Added isValidNepaliPhone() validation in handleSubmit()
+    - Updated all phone/combo inputs to use appropriate handlers and placeholders
+
+18. src/lib/api.ts:
+    - Removed hardcoded "Content-Type: application/json" from default axios instance headers to allow FormData (multipart/form-data) to work correctly
+    - Kept the rest of the interceptor logic (auth tokens, 401 handling) unchanged
+
+19. src/app/dashboard/settings/page.tsx:
+    - Added a new state "shopLogoFile" that stores the actual File object (base64 only used for preview)
+    - Updated handleLogo() to set shopLogoFile in addition to setting shopLogo (preview)
+    - Updated saveSection() to handle Branding saves differently: use FormData with the file (if present) and theme color
+    - For other sections (shop info, Wi-Fi, SMS), explicitly set "Content-Type: application/json" header to ensure proper JSON transmission
+    - Updated the "Remove" button to clear both shopLogo and shopLogoFile
+
+20. src/app/dashboard/workers/page.tsx:
+    - Explicitly set "Content-Type: application/json" header in api.patch and api.post calls
+    - Updated clockAction() to also use the header for API requests
+
+21. src/app/dashboard/queue/page.tsx:
+    - Explicitly set "Content-Type: application/json" header in api.patch calls in updateCard()
+
+22. src/app/dashboard/queue/page.tsx:
+    - Updated the select element (for assigning workers) to always have black text (color: '#000000') instead of conditional color

@@ -1,12 +1,17 @@
 'use client'
 import { useState, useEffect, useRef, useCallback, use } from 'react'
 import api from '@/lib/api'
+import { normalizePhone, isValidNepaliPhone } from '@/lib/phone'
 
 interface ShopInfo {
   id: string
   name: string
   logo: string | null
   themeColor: string | null
+  wifiName?: string | null
+  wifiPassword?: string | null
+  wifiType?: string | null
+  wifiHidden?: boolean | null
 }
 
 type Step = 'form' | 'submitted' | 'tracking' | 'check_form' | 'checking' | 'my_card'
@@ -63,6 +68,15 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
     return x
   }
   function normPlate(p: string) { return p.toUpperCase().replace(/\s+/g, ' ').trim() }
+  function handlePhoneChange(value: string, setter: (v: string) => void) {
+    const cleaned = value.replace(/[^\d\s\-().]/g, '')
+    setter(cleaned)
+  }
+  function handleComboInputChange(value: string, setter: (v: string) => void) {
+    // Allow digits, spaces, hyphens, parentheses, and letters (for plates)
+    const cleaned = value.replace(/[^\d\s\-().a-zA-Z]/g, '')
+    setter(cleaned)
+  }
 
   function playChime() {
     try {
@@ -144,6 +158,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!phone.trim()) return setError('Phone number is required')
+    if (!isValidNepaliPhone(phone)) return setError('Please enter a valid Nepali phone number')
     if (!plateNo.trim()) return setError('Vehicle plate number is required')
     
     try {
@@ -417,7 +432,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
               <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
                 <div>
                   <label style={lbl}>📱 Phone number *</label>
-                  <input suppressHydrationWarning type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="98XXXXXXXX" required style={inp} inputMode="numeric" />
+                  <input suppressHydrationWarning type="tel" value={phone} onChange={e => handlePhoneChange(e.target.value, setPhone)} placeholder="98 XXXX XXXX" maxLength={14} required style={inp} inputMode="numeric" />
                 </div>
                 <div>
                   <label style={lbl}>🚗 Plate number *</label>
@@ -430,11 +445,36 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
               </form>
             </div>
 
+            {shop?.wifiName && (
+              <div style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 16, padding: '1.25rem' }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#e8f4fd', marginBottom: '0.875rem' }}>📶 Free WiFi</div>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`WIFI:S:${shop.wifiName};T:${shop.wifiType || 'WPA'};P:${shop.wifiPassword || ''};H:${shop.wifiHidden ? 'true' : 'false'};;`)}`}
+                    alt="WiFi QR Code"
+                    style={{ width: 120, height: 120, borderRadius: 12, background: '#fff', objectFit: 'contain' }}
+                  />
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '0.5rem' }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)' }}>SSID</div>
+                      <div style={{ fontSize: 14, color: '#4ade80', fontWeight: 600 }}>{shop.wifiName}</div>
+                    </div>
+                    {shop.wifiPassword && (
+                      <div>
+                        <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)' }}>Password</div>
+                        <div style={{ fontSize: 14, color: '#4ade80', fontWeight: 600, fontFamily: 'monospace' }}>{shop.wifiPassword}</div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div style={{ background: 'rgba(56,189,248,0.06)', border: '1px solid rgba(56,189,248,0.2)', borderRadius: 16, padding: '1.25rem' }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: '#e8f4fd', marginBottom: 3 }}>🔍 Check your wash status</div>
               <div style={{ fontSize: 13, color: 'rgba(232,244,253,0.45)', marginBottom: '0.875rem' }}>Enter your phone number or plate number</div>
               <form onSubmit={handleCheckStatus} style={{ display: 'flex', gap: 8 }}>
-                <input suppressHydrationWarning type="text" value={checkInput} onChange={e => setCheckInput(e.target.value)} placeholder="98XXXXXXXX or BA 1 PA 2345" style={{ ...inp, flex: 1, padding: '10px 14px', fontSize: 14 }} />
+                <input suppressHydrationWarning type="text" value={checkInput} onChange={e => handleComboInputChange(e.target.value, setCheckInput)} placeholder="98 XXXX XXXX or BA 1 PA 2345" style={{ ...inp, flex: 1, padding: '10px 14px', fontSize: 14 }} />
                 <button type="submit" style={{ background: theme, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>Check →</button>
               </form>
               {checkError && <div style={{ color: '#f87171', fontSize: 12, marginTop: 6 }}>⚠ {checkError}</div>}
@@ -460,7 +500,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
               <div style={{ fontSize: 14, fontWeight: 600, color: '#e8f4fd', marginBottom: 3 }}>🎯 My loyalty card</div>
               <div style={{ fontSize: 13, color: 'rgba(232,244,253,0.45)', marginBottom: '0.875rem' }}>See your stamps, history and free wash progress</div>
               <form onSubmit={handleMyCard} style={{ display: 'flex', gap: 8 }}>
-                <input suppressHydrationWarning type="text" value={myCardInput} onChange={e => setMyCardInput(e.target.value)} placeholder="Phone or plate number" style={{ ...inp, flex: 1, padding: '10px 14px', fontSize: 14 }} />
+                <input suppressHydrationWarning type="text" value={myCardInput} onChange={e => handleComboInputChange(e.target.value, setMyCardInput)} placeholder="98 XXXX XXXX or BA 1 PA 2345" style={{ ...inp, flex: 1, padding: '10px 14px', fontSize: 14 }} />
                 <button type="submit" style={{ background: '#f59e0b', color: '#0c1a2e', border: 'none', borderRadius: 10, padding: '10px 16px', fontSize: 14, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>View →</button>
               </form>
               {myCardError && <div style={{ color: '#f87171', fontSize: 12, marginTop: 6 }}>⚠ {myCardError}</div>}

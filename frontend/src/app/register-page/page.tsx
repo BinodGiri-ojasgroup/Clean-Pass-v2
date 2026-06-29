@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import axios from 'axios'
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google'
+import { normalizePhone, isValidNepaliPhone } from '@/lib/phone'
 
 export default function RegisterPage() {
   const [form, setForm] = useState({ name: '', email: '', password: '', phone: '', address: '' })
@@ -15,13 +16,25 @@ export default function RegisterPage() {
   const inp: React.CSSProperties = { width: '100%', border: '1px solid rgba(255,255,255,0.15)', borderRadius: 10, padding: '12px 14px', fontSize: 15, color: '#e8f4fd', background: 'rgba(255,255,255,0.07)', outline: 'none', boxSizing: 'border-box' }
   const lbl: React.CSSProperties = { display: 'block', color: 'rgba(232,244,253,0.55)', fontSize: 13, marginBottom: 6 }
 
+  function handlePhoneChange(value: string) {
+    const cleaned = value.replace(/[^\d\s\-().]/g, '')
+    setForm(p => ({ ...p, phone: cleaned }))
+  }
+  
   // 1. Traditional Signup Submission Handler
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); 
+    // Validate phone number
+    if (form.phone.trim() && !isValidNepaliPhone(form.phone)) {
+      setError('Please enter a valid Nepali phone number (10 digits starting with 9)')
+      return
+    }
     setLoading(true); 
     setError('')
+    const payload = { ...form }
+    if (payload.phone) payload.phone = normalizePhone(payload.phone)
     try {
-      const response = await axios.post('http://127.0.0.1:8000/api/auth/register/', form)
+      const response = await axios.post('http://127.0.0.1:8000/api/auth/register/', payload)
       
       if (response.data?.success) {
         const payload = response.data.data
@@ -121,9 +134,11 @@ export default function RegisterPage() {
                 type="text" 
                 required 
                 style={inp} 
-                placeholder="+1 (555) 000-0000" 
+                placeholder="98 XXXX XXXX" 
+                maxLength={14}
+                inputMode="numeric"
                 value={form.phone} 
-                onChange={e => setForm({...form, phone: e.target.value})} 
+                onChange={e => handlePhoneChange(e.target.value)} 
               />
             </div>
 
@@ -172,6 +187,7 @@ export default function RegisterPage() {
                 onSuccess={handleGoogleSuccess}
                 onError={() => setError('Google OAuth Authentication failed.')}
                 useOneTap
+                text="signup_with"
               />
             </div>
 

@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
+import api from '@/lib/api'
 
 interface Wash { id: string; createdAt: string; paid: boolean; paymentMethod: string | null; redeemed: boolean; package?: { name: string; price: number } | null; worker?: { name: string } | null }
-interface Vehicle { id: string; plateNo: string; make: string|null; color: string|null; vehicleType: { id:string;name:string;icon:string;washGoal:number }; customer: { id:string;name:string|null;phone:string }; activeWashes: number; unpaidWashes: number; isRewardReady: boolean; createdAt: string }
+interface Vehicle { id: string; plateNo: string; make: string|null; color: string|null; vehicleType: { id:string; name:string; icon:string; washGoal:number }; customer: { id:string; name:string|null; phone:string }; activeWashes: number; unpaidWashes: number; isRewardReady: boolean; createdAt: string }
 
 const PAYMENT_METHODS = [
   { key: 'cash',   label: 'Cash',   color: '#22c55e', emoji: '💵' },
@@ -32,9 +33,8 @@ export default function VehiclesPage() {
 
   const loadVehicles = useCallback(async (q = '') => {
     setLoading(true)
-    const res = await fetch(`/api/vehicles${q ? `?search=${encodeURIComponent(q)}` : ''}`)
-    const data = await res.json()
-    if (data.success) setVehicles(data.data)
+    const res = await api.get(`/vehicles/`, { params: { search: q || undefined } })
+    if (res.data.success) setVehicles(res.data.data)
     setLoading(false)
   }, [])
 
@@ -44,10 +44,9 @@ export default function VehiclesPage() {
   async function loadUnpaid(v: Vehicle) {
     setUnpaidVehicle(v)
     setUnpaidLoading(true)
-    const res = await fetch(`/api/vehicles/${v.id}`)
-    const data = await res.json()
-    if (data.success) {
-      const allWashes: Wash[] = data.data.washes || []
+    const res = await api.get(`/vehicles/${v.id}/`)
+    if (res.data.success) {
+      const allWashes: Wash[] = res.data.data.washes || []
       setUnpaidWashes(allWashes.filter((w: Wash) => !w.paid && !w.redeemed))
     }
     setUnpaidLoading(false)
@@ -56,9 +55,8 @@ export default function VehiclesPage() {
   async function markPaid(washId: string) {
     if (!unpaidVehicle) return
     setPayingId(washId)
-    await fetch(`/api/vehicles/${unpaidVehicle.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'mark_paid', washId, paymentMethod: selectedPayMethod })
+    await api.patch(`/vehicles/${unpaidVehicle.id}/`, {
+      action: 'mark_paid', washId, paymentMethod: selectedPayMethod
     })
     setUnpaidWashes(p => p.filter(w => w.id !== washId))
     setVehicles(p => p.map(v => v.id === unpaidVehicle.id ? { ...v, unpaidWashes: v.unpaidWashes - 1 } : v))
@@ -69,9 +67,8 @@ export default function VehiclesPage() {
   async function markAllPaid() {
     if (!unpaidVehicle) return
     setPayingAll(true)
-    await fetch(`/api/vehicles/${unpaidVehicle.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'mark_all_paid', paymentMethod: selectedPayMethod })
+    await api.patch(`/vehicles/${unpaidVehicle.id}/`, {
+      action: 'mark_all_paid', paymentMethod: selectedPayMethod
     })
     setVehicles(p => p.map(v => v.id === unpaidVehicle.id ? { ...v, unpaidWashes: 0 } : v))
     setUnpaidWashes([])
@@ -84,13 +81,12 @@ export default function VehiclesPage() {
     setAdjusting(true)
     const body: Record<string,unknown> = { action }
     if (action === 'set') body.targetCount = localCount
-    const res = await fetch(`/api/vehicles/${editing.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    const data = await res.json()
-    if (data.success) {
-      setLocalCount(data.data.activeWashes)
-      setVehicles(p => p.map(v => v.id === editing.id ? { ...v, activeWashes: data.data.activeWashes, isRewardReady: data.data.isRewardReady } : v))
-      setEditing(p => p ? { ...p, activeWashes: data.data.activeWashes, isRewardReady: data.data.isRewardReady } : null)
-      showToast(action === 'remove' ? '✓ Wash removed' : action === 'add' ? '✓ Wash added' : `✓ Set to ${data.data.activeWashes}`)
+    const res = await api.patch(`/vehicles/${editing.id}/`, body)
+    if (res.data.success) {
+      setLocalCount(res.data.data.activeWashes)
+      setVehicles(p => p.map(v => v.id === editing.id ? { ...v, activeWashes: res.data.data.activeWashes, isRewardReady: res.data.data.isRewardReady } : v))
+      setEditing(p => p ? { ...p, activeWashes: res.data.data.activeWashes, isRewardReady: res.data.data.isRewardReady } : null)
+      showToast(action === 'remove' ? '✓ Wash removed' : action === 'add' ? '✓ Wash added' : `✓ Set to ${res.data.data.activeWashes}`)
     }
     setAdjusting(false)
   }

@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import api from '@/lib/api'
 
 interface Appointment { id: string; date: string; timeSlot: string; status: string; notes: string|null; vehicle: { plateNo: string; vehicleType: { name: string; icon: string }; customer: { name: string|null; phone: string } } }
 
@@ -17,23 +18,22 @@ export default function AppointmentsPage() {
 
   async function load(d: string) {
     setLoading(true)
-    const res = await fetch(`/api/appointments?date=${d}`)
-    const data = await res.json()
-    if (data.success) setAppointments(data.data)
+    const res = await api.get(`/appointments/`, { params: { date: d } })
+    if (res.data.success) setAppointments(res.data.data)
     setLoading(false)
   }
 
   useEffect(() => { load(date) }, [date])
 
   async function updateStatus(id: string, status: string) {
-    await fetch(`/api/appointments/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) })
+    await api.patch(`/appointments/${id}/`, { status })
     await load(date)
     showToast(`✓ Marked as ${status}`)
   }
 
   async function deleteAppt(id: string) {
     if (!confirm('Cancel this appointment?')) return
-    await fetch(`/api/appointments/${id}`, { method: 'DELETE' })
+    await api.delete(`/appointments/${id}/`)
     await load(date)
     showToast('Appointment cancelled')
   }

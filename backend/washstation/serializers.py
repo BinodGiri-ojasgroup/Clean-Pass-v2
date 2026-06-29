@@ -67,9 +67,11 @@ class ShopUpdateSerializer(serializers.ModelSerializer):
 
 # --- STANDARD CRUD SERIALIZERS ---
 class VehicleTypeSerializer(serializers.ModelSerializer):
+    washGoal = serializers.IntegerField(source='wash_goal', read_only=True)
+    
     class Meta:
         model = VehicleType
-        fields = '__all__'
+        fields = ['id', 'name', 'icon', 'washGoal', 'active', 'created_at']
         read_only_fields = ['id', 'created_at', 'washstation']
 
 class WashPackageSerializer(serializers.ModelSerializer):
@@ -88,39 +90,65 @@ class WorkerSerializer(serializers.ModelSerializer):
         }
 
 class ShiftSerializer(serializers.ModelSerializer):
+    clockIn = serializers.DateTimeField(source='clock_in', read_only=True)
+    clockOut = serializers.DateTimeField(source='clock_out', read_only=True)
+    
     class Meta:
         model = Shift
-        fields = '__all__'
+        fields = ['id', 'worker', 'washstation', 'clockIn', 'clockOut', 'created_at']
         read_only_fields = ['id', 'created_at', 'washstation']
 
 class CustomerSerializer(serializers.ModelSerializer):
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    
     class Meta:
         model = Customer
-        fields = '__all__'
+        fields = ['id', 'phone', 'name', 'washstation', 'createdAt']
         read_only_fields = ['id', 'created_at', 'washstation']
 
 class VehicleSerializer(serializers.ModelSerializer):
+    plateNo = serializers.CharField(source='plate_no')
+    vehicleType = VehicleTypeSerializer(source='vehicle_type', read_only=True)
+    customer = CustomerSerializer(read_only=True)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    
     class Meta:
         model = Vehicle
-        fields = '__all__'
+        fields = ['id', 'plateNo', 'customer', 'vehicleType', 'make', 'color', 'washstation', 'createdAt']
         read_only_fields = ['id', 'created_at', 'washstation']
 
 class WashSerializer(serializers.ModelSerializer):
+    paymentMethod = serializers.CharField(source='payment_method', read_only=True)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    washStartAt = serializers.DateTimeField(source='wash_start_at', read_only=True)
+    washDoneAt = serializers.DateTimeField(source='wash_done_at', read_only=True)
+    package = WashPackageSerializer(read_only=True)
+    worker = WorkerSerializer(read_only=True)
+    
     class Meta:
         model = Wash
-        fields = '__all__'
+        fields = ['id', 'washstation', 'vehicle', 'package', 'worker', 'paid', 'paymentMethod', 'redeemed', 'redeemed_at', 'status', 'washStartAt', 'washDoneAt', 'notes', 'createdAt']
         read_only_fields = ['id', 'created_at', 'washstation']
 
 class WashRequestSerializer(serializers.ModelSerializer):
+    plateNo = serializers.CharField(source='plate_no')
+    createdAt = serializers.DateTimeField(source='created_at')
+    package = WashPackageSerializer(read_only=True)
+    
     class Meta:
         model = WashRequest
-        fields = '__all__'
+        fields = ['id', 'phone', 'plateNo', 'package', 'status', 'createdAt', 'resolved_at']
         read_only_fields = ['id', 'created_at', 'washstation']
 
 class AppointmentSerializer(serializers.ModelSerializer):
+    timeSlot = serializers.CharField(source='time_slot', read_only=True)
+    vehicle = VehicleSerializer(read_only=True)
+    package = WashPackageSerializer(read_only=True)
+    createdAt = serializers.DateTimeField(source='created_at', read_only=True)
+    
     class Meta:
         model = Appointment
-        fields = '__all__'
+        fields = ['id', 'washstation', 'vehicle', 'package', 'date', 'timeSlot', 'status', 'notes', 'createdAt']
         read_only_fields = ['id', 'created_at', 'washstation']
 
 class WaitlistItemSerializer(serializers.ModelSerializer):

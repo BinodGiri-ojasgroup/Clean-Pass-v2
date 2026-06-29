@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, use } from 'react'
+import { normalizePhone, isValidNepaliPhone } from '@/lib/phone'
 
 interface ShopInfo { name:string; themeColor:string|null; vehicleTypes:{id:string;name:string;icon:string}[]; packages:{id:string;name:string;price:number;color:string}[] }
 
@@ -29,12 +30,24 @@ export default function BookPage({ params }: { params: Promise<{ shopId: string 
     })
   }, [form.date, shopId])
 
+  function handlePhoneChange(value: string) {
+    const cleaned = value.replace(/[^\d\s\-().]/g, '')
+    setForm(p => ({ ...p, phone: cleaned }))
+  }
+  
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!form.timeSlot) return setError('Please select a time slot')
+    // Validate phone number
+    if (!isValidNepaliPhone(form.phone)) {
+      setError('Please enter a valid Nepali phone number')
+      return
+    }
     setLoading(true); setError('')
+    const payload = { ...form }
+    payload.phone = normalizePhone(form.phone)
     try {
-      const res = await fetch('/api/public/appointment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopId, ...form }) })
+      const res = await fetch('/api/public/appointment', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shopId, ...payload }) })
       const data = await res.json()
       if (!data.success) { setError(data.error); return }
       setSuccess(`✅ Appointment booked for ${form.date} at ${form.timeSlot}! See you then.`)
@@ -68,7 +81,7 @@ export default function BookPage({ params }: { params: Promise<{ shopId: string 
 
         <div style={{ background:'rgba(255,255,255,0.05)', border:'0.5px solid rgba(56,189,248,0.15)', borderRadius:18, padding:'1.75rem' }}>
           <form onSubmit={handleSubmit} style={{ display:'flex', flexDirection:'column', gap:'1rem' }}>
-            <div><label style={lbl}>📱 Phone number *</label><input suppressHydrationWarning type="tel" value={form.phone} onChange={e=>setForm(p=>({...p,phone:e.target.value}))} required placeholder="98XXXXXXXX" style={inp} /></div>
+            <div><label style={lbl}>📱 Phone number *</label><input suppressHydrationWarning type="tel" value={form.phone} onChange={e=>handlePhoneChange(e.target.value)} required placeholder="98 XXXX XXXX" maxLength={14} inputMode="numeric" style={inp} /></div>
             <div><label style={lbl}>🚗 Plate number *</label><input suppressHydrationWarning type="text" value={form.plateNo} onChange={e=>setForm(p=>({...p,plateNo:e.target.value.toUpperCase()}))} required placeholder="BA 1 PA 2345" style={{ ...inp, fontFamily:'monospace', letterSpacing:1 }} /></div>
             <div>
               <label style={lbl}>🚙 Vehicle type *</label>

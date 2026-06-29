@@ -8,8 +8,7 @@ export const err = (error: string, status = 400) => NextResponse.json({ success:
 // 2. Centralized Frontend Axios Client Configuration
 const api = axios.create({
   // Uses .env.local variable, falls back to localhost for local dev
-  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/', 
-  headers: { 'Content-Type': 'application/json' }
+  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000/api/',
 });
 
 // Request Interceptor: Attach JWT token to every request

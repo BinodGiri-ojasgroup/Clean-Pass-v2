@@ -6,7 +6,9 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from washstation.views import (
     RegisterView, LoginView, GoogleLoginView, LogoutView,
     DashboardStatsView, LiveWashQueueView, CurrentShopView,
-    QRGeneratorView, ReportsView, PublicShopInfoView
+    QRGeneratorView, ReportsView, PublicShopInfoView,
+    WorkerShiftView, WashRequestsView, PublicCustomerView,
+    PublicTrackView
 )
 from washstation.views import PublicWashRequestView
 from washstation.views import DailySummaryView
@@ -21,7 +23,11 @@ urlpatterns = [
     path('api/auth/logout/', LogoutView.as_view(), name='logout'),
     path('api/summary/', DashboardStatsView.as_view(), name='dashboard-stats'),
     path('api/washstations/queue/', LiveWashQueueView.as_view(), name='live-queue'),
+    path('api/washstations/queue/<uuid:pk>/', LiveWashQueueView.as_view(), name='live-queue-detail'),
     path('api/auth/workers/', LiveWashQueueView.as_view(), name='live-workers'),
+    path('api/workers/shift/', WorkerShiftView.as_view(), name='worker-shift'),
+    path('api/requests/', WashRequestsView.as_view(), name='wash-requests'),
+    path('api/requests/<uuid:pk>/', WashRequestsView.as_view(), name='wash-request-detail'),
     path('api/shops/me/', CurrentShopView.as_view(), name='current-shop'),
     path('api/qr/', QRGeneratorView.as_view(), name='qr-code'),
     path('api/reports/', ReportsView.as_view(), name='reports'),
@@ -29,6 +35,8 @@ urlpatterns = [
     path('api/daily-summary/', DailySummaryView.as_view(), name='daily-summary'),
     path('api/public/shops/<uuid:shop_id>/', PublicShopInfoView.as_view(), name='public-shop-info'),
     path('api/public/wash-requests/<uuid:shop_id>/', PublicWashRequestView.as_view(), name='public-wash-request'),
+    path('api/public/customer/<uuid:shop_id>/', PublicCustomerView.as_view(), name='public-customer'),
+    path('api/public/track/<uuid:shop_id>/', PublicTrackView.as_view(), name='public-track'),
 
 ]
 

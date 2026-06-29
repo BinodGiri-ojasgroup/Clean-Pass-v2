@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useRef, useCallback } from 'react'
+import api from '@/lib/api'
 
 interface Request { id: string; phone: string; plateNo: string; createdAt: string; package?: { name: string; price: number; color: string } | null }
 interface Package { id: string; name: string; price: number; color: string }
@@ -37,13 +38,12 @@ export default function ApprovalsPage() {
   }
 
   const fetchRequests = useCallback(async () => {
-    const res = await fetch('/api/requests')
-    const data = await res.json()
-    if (data.success) {
-      if (data.data.requests.length > prevCount.current && prevCount.current > 0) playSound('new')
-      prevCount.current = data.data.requests.length
-      setRequests(data.data.requests)
-      setPackages(data.data.packages)
+    const res = await api.get('/requests/')
+    if (res.data.success) {
+      if (res.data.data.requests.length > prevCount.current && prevCount.current > 0) playSound('new')
+      prevCount.current = res.data.data.requests.length
+      setRequests(res.data.data.requests)
+      setPackages(res.data.data.packages)
     }
     setLoading(false)
   }, [soundEnabled])
@@ -57,12 +57,12 @@ export default function ApprovalsPage() {
   async function act(id: string, action: 'approve' | 'reject') {
     setActing(id)
     try {
-      const res = await fetch(`/api/requests/${id}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, packageId: selectedPackages[id] || null, paid: paidStatus[id] !== false })
+      const res = await api.patch(`/requests/${id}/`, {
+        action,
+        packageId: selectedPackages[id] || null,
+        paid: paidStatus[id] !== false
       })
-      const data = await res.json()
-      if (data.success) {
+      if (res.data.success) {
         if (action === 'approve') playSound('approve')
         setRequests(p => p.filter(r => r.id !== id))
         setToast(action === 'approve' ? '✅ Approved — added to wash queue' : '❌ Rejected')

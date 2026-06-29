@@ -12,7 +12,7 @@ from django.contrib.auth import authenticate
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta, datetime
-from django.db.models import Sum
+from django.db.models import Sum, F
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from rest_framework import viewsets, permissions, status
@@ -103,6 +103,30 @@ class WashPackageViewSet(TenantModelViewSet):
 class WorkerViewSet(TenantModelViewSet):
     queryset = Worker.objects.all()
     serializer_class = WorkerSerializer
+    
+    def list(self, request, *args, **kwargs):
+        station = get_washstation(request)
+        if not station:
+            return ok([])
+        now = timezone.now()
+        start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_of_week = now - timedelta(days=now.weekday())
+        workers = Worker.objects.filter(washstation=station, active=True)
+        worker_data = []
+        for worker in workers:
+            active_shift = Shift.objects.filter(worker=worker, clock_out__isnull=True).order_by('-clock_in').first()
+            washes_this_month = Wash.objects.filter(worker=worker, washstation=station, created_at__gte=start_of_month)
+            revenue_this_month = sum(w.package.price for w in washes_this_month if w.paid and w.package)
+            commission_earned = washes_this_month.count() * worker.commission
+            shifts_this_week = Shift.objects.filter(worker=worker, clock_in__gte=start_of_week).count()
+            worker_dict = WorkerSerializer(worker).data
+            worker_dict['activeShift'] = {'clockIn': active_shift.clock_in.isoformat()} if active_shift else None
+            worker_dict['washesThisMonth'] = washes_this_month.count()
+            worker_dict['revenueThisMonth'] = revenue_this_month
+            worker_dict['commissionEarned'] = commission_earned
+            worker_dict['shiftsThisWeek'] = shifts_this_week
+            worker_data.append(worker_dict)
+        return ok(worker_data)
 
 class ShiftViewSet(TenantModelViewSet):
     queryset = Shift.objects.all()
@@ -111,10 +135,135 @@ class ShiftViewSet(TenantModelViewSet):
 class CustomerViewSet(TenantModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
+    
+    def list(self, request, *args, **kwargs):
+        station = get_washstation(request)
+        if not station:
+            return ok([])
+        search = request.query_params.get('search', '')
+        customers = Customer.objects.filter(washstation=station)
+        if search:
+            customers = customers.filter(name__icontains=search) | customers.filter(phone__icontains=search)
+        customer_data = []
+        for customer in customers:
+            customer_dict = CustomerSerializer(customer).data
+            vehicles = Vehicle.objects.filter(customer=customer, washstation=station)
+            vehicle_list = []
+            for v in vehicles:
+                vt = v.vehicle_type
+                washes = Wash.objects.filter(vehicle=v, washstation=station)
+                active_washes = washes.count()
+                vehicle_list.append({
+                    'id': str(v.id),
+                    'plateNo': v.plate_no,
+                    'vehicleTypeName': vt.name if vt else '',
+                    'vehicleTypeIcon': vt.icon if vt else '🚗',
+                    'washGoal': vt.wash_goal if vt else 8,
+                    'activeWashes': active_washes
+                })
+            customer_dict['vehicles'] = vehicle_list
+            customer_data.append(customer_dict)
+        return ok(customer_data)
 
 class VehicleViewSet(TenantModelViewSet):
     queryset = Vehicle.objects.all()
     serializer_class = VehicleSerializer
+    
+    def list(self, request, *args, **kwargs):
+        station = get_washstation(request)
+        if not station:
+            return ok([])
+        search = request.query_params.get('search', '')
+        vehicles = Vehicle.objects.filter(washstation=station)
+        if search:
+            vehicles = vehicles.filter(plate_no__icontains=search) | vehicles.filter(customer__name__icontains=search) | vehicles.filter(customer__phone__icontains=search)
+        vehicle_data = []
+        for vehicle in vehicles:
+            vt = vehicle.vehicle_type
+            washes = Wash.objects.filter(vehicle=vehicle, washstation=station)
+            active_washes = washes.count()
+            unpaid_washes = washes.filter(paid=False, redeemed=False).count()
+            is_reward_ready = vt and active_washes >= vt.wash_goal
+            vehicle_dict = VehicleSerializer(vehicle).data
+            vehicle_dict['plateNo'] = vehicle.plate_no
+            vehicle_dict['vehicleType'] = VehicleTypeSerializer(vt).data if vt else {
+                'id': None, 'name': 'Unknown', 'icon': '🚗', 'washGoal': 8, 'active': True
+            }
+            vehicle_dict['customer'] = CustomerSerializer(vehicle.customer).data if vehicle.customer else {
+                'id': None, 'name': None, 'phone': 'Unknown', 'washstation': None, 'createdAt': None
+            }
+            vehicle_dict['activeWashes'] = active_washes
+            vehicle_dict['unpaidWashes'] = unpaid_washes
+            vehicle_dict['isRewardReady'] = is_reward_ready
+            vehicle_data.append(vehicle_dict)
+        return ok(vehicle_data)
+        
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        washes = Wash.objects.filter(vehicle=instance, washstation=get_washstation(request))
+        wash_data = []
+        for w in washes:
+            w_dict = WashSerializer(w).data
+            w_dict['createdAt'] = w.created_at.isoformat()
+            wash_data.append(w_dict)
+        data = VehicleSerializer(instance).data
+        data['washes'] = wash_data
+        return ok(data)
+        
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        station = get_washstation(request)
+        action = request.data.get('action')
+        
+        if action == 'mark_paid':
+            wash_id = request.data.get('washId')
+            payment_method = request.data.get('paymentMethod', PaymentMethod.CASH)
+            if wash_id:
+                wash = Wash.objects.get(id=wash_id, washstation=station)
+                wash.paid = True
+                wash.payment_method = payment_method
+                wash.save()
+            return self.retrieve(request, *args, **kwargs)
+            
+        elif action == 'mark_all_paid':
+            payment_method = request.data.get('paymentMethod', PaymentMethod.CASH)
+            washes = Wash.objects.filter(vehicle=instance, washstation=station, paid=False, redeemed=False)
+            for w in washes:
+                w.paid = True
+                w.payment_method = payment_method
+                w.save()
+            return self.retrieve(request, *args, **kwargs)
+            
+        elif action == 'add' or action == 'remove' or action == 'set':
+            vt = instance.vehicle_type
+            current_count = Wash.objects.filter(vehicle=instance, washstation=station).count()
+            new_count = current_count
+            if action == 'add':
+                new_count += 1
+            elif action == 'remove':
+                new_count = max(0, new_count -1)
+            elif action == 'set':
+                new_count = int(request.data.get('targetCount', 0))
+                
+            # Adjust washes to reach new count
+            diff = new_count - current_count
+            if diff > 0:
+                for _ in range(diff):
+                    Wash.objects.create(
+                        vehicle=instance,
+                        washstation=station,
+                        status=WashStatus.DONE,
+                        paid=True,
+                        payment_method=PaymentMethod.CASH
+                    )
+            elif diff < 0:
+                washes_to_delete = Wash.objects.filter(vehicle=instance, washstation=station).order_by('-created_at')[:abs(diff)]
+                for w in washes_to_delete:
+                    w.delete()
+                    
+            return self.retrieve(request, *args, **kwargs)
+            
+        return super().partial_update(request, *args, **kwargs)
 
 class WashViewSet(TenantModelViewSet):
     queryset = Wash.objects.all()
@@ -127,6 +276,20 @@ class WashRequestViewSet(TenantModelViewSet):
 class AppointmentViewSet(TenantModelViewSet):
     queryset = Appointment.objects.all()
     serializer_class = AppointmentSerializer
+    
+    def list(self, request, *args, **kwargs):
+        station = get_washstation(request)
+        if not station:
+            return ok([])
+        date = request.query_params.get('date', timezone.now().date().isoformat())
+        appointments = Appointment.objects.filter(washstation=station, date=date)
+        appt_data = []
+        for a in appointments:
+            appt_dict = AppointmentSerializer(a).data
+            appt_dict['timeSlot'] = a.time_slot
+            appt_dict['vehicle'] = VehicleSerializer(a.vehicle).data if a.vehicle else None
+            appt_data.append(appt_dict)
+        return ok(appt_data)
 
 class WaitlistItemViewSet(TenantModelViewSet):
     queryset = WaitlistItem.objects.all()
@@ -361,6 +524,36 @@ class DashboardStatsView(APIView):
         })
 
 
+# --- WORKER SHIFT ---
+class WorkerShiftView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        station = get_washstation(request)
+        if not station:
+            return err('Shop not found')
+        
+        worker_id = request.data.get('workerId')
+        action = request.data.get('action')
+        
+        try:
+            worker = Worker.objects.get(id=worker_id, washstation=station)
+        except Worker.DoesNotExist:
+            return err('Worker not found')
+            
+        if action == 'in':
+            active_shift = Shift.objects.filter(worker=worker, clock_out__isnull=True).first()
+            if active_shift:
+                return err('Worker already clocked in')
+            Shift.objects.create(worker=worker, washstation=station)
+        elif action == 'out':
+            active_shift = Shift.objects.filter(worker=worker, clock_out__isnull=True).order_by('-clock_in').first()
+            if active_shift:
+                active_shift.clock_out = timezone.now()
+                active_shift.save()
+                
+        return ok({'message': 'Shift updated'})
+
 # --- LIVE QUEUE ---
 class LiveWashQueueView(APIView):
     permission_classes = [IsAuthenticated]
@@ -372,13 +565,133 @@ class LiveWashQueueView(APIView):
 
         if 'workers' in request.path:
             workers = Worker.objects.filter(washstation=station, active=True)
-            return Response(WorkerSerializer(workers, many=True).data)
+            worker_data = []
+            for w in workers:
+                worker_dict = WorkerSerializer(w).data
+                active_shift = Shift.objects.filter(worker=w, clock_out__isnull=True).first()
+                worker_dict['activeShift'] = {'clockIn': active_shift.clock_in.isoformat()} if active_shift else None
+                worker_data.append(worker_dict)
+            return ok(worker_data)
 
         active_washes = Wash.objects.filter(
             washstation=station,
             status__in=[WashStatus.QUEUED, WashStatus.WASHING]
         )
-        return Response(WashSerializer(active_washes, many=True).data)
+        wash_data = []
+        for w in active_washes:
+            w_dict = WashSerializer(w).data
+            w_dict['plateNo'] = w.vehicle.plate_no if w.vehicle else ''
+            w_dict['vehicleType'] = VehicleTypeSerializer(w.vehicle.vehicle_type).data if (w.vehicle and w.vehicle.vehicle_type) else {'name': 'Car', 'icon': '🚗'}
+            w_dict['customerName'] = w.vehicle.customer.name if (w.vehicle and w.vehicle.customer) else None
+            w_dict['customerPhone'] = w.vehicle.customer.phone if (w.vehicle and w.vehicle.customer) else ''
+            w_dict['packageName'] = w.package.name if w.package else None
+            w_dict['packagePrice'] = w.package.price if w.package else None
+            w_dict['packageColor'] = w.package.color if w.package else '#0ea5e9'
+            w_dict['worker'] = WorkerSerializer(w.worker).data if w.worker else None
+            w_dict['washStartAt'] = w.wash_start_at.isoformat() if w.wash_start_at else None
+            w_dict['createdAt'] = w.created_at.isoformat()
+            wash_data.append(w_dict)
+        return ok(wash_data)
+        
+    def patch(self, request, pk=None):
+        station = get_washstation(request)
+        if not station:
+            return err('Shop not found')
+            
+        try:
+            wash = Wash.objects.get(id=pk, washstation=station)
+        except Wash.DoesNotExist:
+            return err('Wash not found', 404)
+            
+        if 'status' in request.data:
+            wash.status = request.data['status']
+            if request.data['status'] == WashStatus.WASHING and not wash.wash_start_at:
+                wash.wash_start_at = timezone.now()
+            wash.save()
+        if 'workerId' in request.data:
+            worker_id = request.data['workerId']
+            if worker_id:
+                worker = Worker.objects.get(id=worker_id, washstation=station)
+                wash.worker = worker
+            else:
+                wash.worker = None
+            wash.save()
+        if 'paymentMethod' in request.data:
+            wash.payment_method = request.data['paymentMethod']
+            wash.save()
+        if 'paid' in request.data:
+            wash.paid = request.data['paid']
+            wash.save()
+            
+        return ok(WashSerializer(wash).data)
+        
+# --- WASH REQUESTS ---
+class WashRequestsView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        station = get_washstation(request)
+        if not station:
+            return err('Shop not found')
+            
+        pending_requests = WashRequest.objects.filter(
+            washstation=station,
+            status=RequestStatus.PENDING
+        ).order_by('-created_at')
+        
+        packages = WashPackage.objects.filter(washstation=station, active=True)
+        
+        return ok({
+            'requests': WashRequestSerializer(pending_requests, many=True).data,
+            'packages': WashPackageSerializer(packages, many=True).data
+        })
+        
+    def patch(self, request, pk=None):
+        station = get_washstation(request)
+        if not station:
+            return err('Shop not found')
+            
+        try:
+            wash_request = WashRequest.objects.get(id=pk, washstation=station)
+        except WashRequest.DoesNotExist:
+            return err('Request not found', 404)
+            
+        action = request.data.get('action')
+        
+        if action == 'approve':
+            package_id = request.data.get('packageId')
+            package = None
+            if package_id:
+                try:
+                    package = WashPackage.objects.get(id=package_id, washstation=station)
+                except WashPackage.DoesNotExist:
+                    package = None
+            paid = request.data.get('paid', True)
+            
+            # Create wash
+            wash = Wash.objects.create(
+                washstation=station,
+                vehicle=wash_request.vehicle,
+                package=package,
+                status=WashStatus.QUEUED,
+                paid=paid
+            )
+            
+            # Mark request as resolved
+            wash_request.status = RequestStatus.RESOLVED
+            wash_request.resolved_at = timezone.now()
+            wash_request.save()
+            
+            return ok({'message': 'Request approved, wash added to queue'})
+            
+        elif action == 'reject':
+            wash_request.status = RequestStatus.CANCELLED
+            wash_request.resolved_at = timezone.now()
+            wash_request.save()
+            
+            return ok({'message': 'Request rejected'})
+            
+        return err('Invalid action')
 
 
 # --- REPORTS ---
@@ -438,6 +751,232 @@ class ReportsView(APIView):
             'unpaid': unpaid_revenue,
             'redemptions': redemptions
         })
+class PublicCustomerView(APIView):
+    """
+    Public endpoint to fetch customer's loyalty card info.
+    No login required, uses shopId and phone/plateNo.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, shop_id):
+        raw_phone = request.GET.get('phone')
+        raw_plate_no = request.GET.get('plateNo')
+
+        if not raw_phone and not raw_plate_no:
+            return err('Phone or plate number is required.', 400)
+
+        try:
+            station = Washstation.objects.get(id=shop_id, active=True)
+        except (Washstation.DoesNotExist, ValidationError, ValueError):
+            return err('Shop not found or inactive.', 404)
+
+        if raw_plate_no:
+            # Look up by plate number
+            try:
+                vehicle = Vehicle.objects.get(
+                    washstation=station, plate_no=raw_plate_no
+                )
+            except Vehicle.DoesNotExist:
+                return ok({
+                    'exists': False,
+                    'vehicle': None,
+                    'vehicles': []
+                })
+            customer = vehicle.customer
+            vehicles = [vehicle]
+        else:
+            # Look up by phone
+            try:
+                customer = Customer.objects.get(
+                    washstation=station, phone=raw_phone
+                )
+            except Customer.DoesNotExist:
+                return ok({
+                    'exists': False,
+                    'vehicle': None,
+                    'vehicles': []
+                })
+            vehicles = Vehicle.objects.filter(
+                washstation=station, customer=customer
+            )
+
+        # Build response data
+        if raw_plate_no and len(vehicles) >= 1:
+            vehicle = vehicles[0]
+            washes = Wash.objects.filter(
+                washstation=station, vehicle=vehicle
+            )
+            active_washes = washes.count()
+            vehicle_type = vehicle.vehicle_type
+            wash_goal = vehicle_type.wash_goal if vehicle_type else 8
+            is_reward_ready = wash_goal and active_washes >= wash_goal
+
+            # Calculate total washes, redemptions, unpaid count
+            all_washes = Wash.objects.filter(washstation=station, vehicle=vehicle).order_by('-created_at')
+            total_washes = all_washes.count()
+            total_redemptions = all_washes.filter(redeemed=True).count()
+            unpaid_count = all_washes.filter(paid=False, redeemed=False).count()
+
+            return ok({
+                'exists': True,
+                'shop': {'id': str(station.id), 'name': station.name},
+                'vehicle': {
+                    'plateNo': vehicle.plate_no,
+                    'make': vehicle.make,
+                    'color': vehicle.color,
+                    'vehicleTypeName': vehicle_type.name if vehicle_type else 'Unknown',
+                    'vehicleTypeIcon': vehicle_type.icon if vehicle_type else '🚗',
+                },
+                'vehicleType': {
+                    'name': vehicle_type.name if vehicle_type else 'Unknown',
+                    'icon': vehicle_type.icon if vehicle_type else '🚗',
+                    'washGoal': wash_goal
+                },
+                'customer': {
+                    'name': customer.name,
+                    'phone': customer.phone
+                },
+                'activeWashes': active_washes,
+                'totalWashes': total_washes,
+                'totalRedemptions': total_redemptions,
+                'unpaidCount': unpaid_count,
+                'washGoal': wash_goal,
+                'isRewardReady': is_reward_ready,
+                'history': [
+                    {
+                        'id': str(w.id),
+                        'createdAt': w.created_at.isoformat(),
+                        'paid': w.paid,
+                        'paymentMethod': w.payment_method,
+                        'redeemed': w.redeemed,
+                        'packageName': w.package.name if w.package else None
+                    }
+                    for w in all_washes
+                ],
+                'vehicles': None
+            })
+        else:
+            # Return list of vehicles for phone lookup
+            vehicle_list = []
+            for v in vehicles:
+                vt = v.vehicle_type
+                vehicle_list.append({
+                    'id': str(v.id),
+                    'plateNo': v.plate_no,
+                    'make': v.make,
+                    'color': v.color,
+                    'vehicleTypeName': vt.name if vt else 'Unknown',
+                    'vehicleTypeIcon': vt.icon if vt else '🚗',
+                    'washGoal': vt.wash_goal if vt else 8,
+                    'activeWashes': Wash.objects.filter(washstation=station, vehicle=v).count()
+                })
+            return ok({
+                'exists': True,
+                'vehicle': None,
+                'vehicles': vehicle_list
+            })
+
+
+class PublicTrackView(APIView):
+    """
+    Public endpoint to track wash status by plate number.
+    No login required.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, shop_id):
+        try:
+            station = Washstation.objects.get(id=shop_id, active=True)
+        except (Washstation.DoesNotExist, ValidationError, ValueError):
+            return err('Shop not found or inactive.', 404)
+
+        plate_no = request.GET.get('plateNo')
+        if not plate_no:
+            return err('Plate number is required.', 400)
+
+        # Try to get the vehicle
+        try:
+            vehicle = Vehicle.objects.get(washstation=station, plate_no=plate_no)
+        except Vehicle.DoesNotExist:
+            return ok({'found': False, 'shop': None, 'activeWash': None, 'queuePosition': None, 'activeStamps': 0, 'washGoal': 8, 'isRewardReady': False, 'recentWashes': []})
+
+        # Get recent washes
+        recent_washes = Wash.objects.filter(washstation=station, vehicle=vehicle).order_by('-created_at')[:10]
+        total_washes = recent_washes.count()
+        
+        # Get wash goal from vehicle type
+        vehicle_type = vehicle.vehicle_type
+        wash_goal = vehicle_type.wash_goal if vehicle_type else 8
+
+        # Calculate active stamps
+        active_stamps = total_washes
+        is_reward_ready = active_stamps >= wash_goal
+
+        # Find active wash (status not done or no_wash)
+        active_wash = None
+        queue_position = None
+        for wash in recent_washes:
+            if wash.status not in ['done', 'no_wash']:
+                active_wash = wash
+                break
+        
+        # If no active wash, check pending requests
+        if not active_wash:
+            pending_requests = WashRequest.objects.filter(washstation=station, vehicle=vehicle, status='pending').order_by('-created_at')[:1]
+            if pending_requests.exists():
+                req = pending_requests.first()
+                # Count pending requests before this one for queue position
+                queue_pos = WashRequest.objects.filter(washstation=station, status='pending', created_at__lt=req.created_at).count() + 1
+                return ok({
+                    'found': True,
+                    'shop': {'id': str(station.id), 'name': station.name},
+                    'activeWash': {
+                        'id': str(req.id),
+                        'status': 'pending',
+                        'packageName': req.package.name if req.package else None,
+                        'workerName': None,
+                        'createdAt': req.created_at.isoformat()
+                    },
+                    'queuePosition': queue_pos,
+                    'activeStamps': active_stamps,
+                    'washGoal': wash_goal,
+                    'isRewardReady': is_reward_ready,
+                    'recentWashes': []
+                })
+
+        # If there is an active wash, find queue position
+        if active_wash:
+            queue_position = Wash.objects.filter(washstation=station, status='queued', created_at__lt=active_wash.created_at).count() + 1
+            worker_name = active_wash.worker.name if active_wash.worker else None
+
+        return ok({
+            'found': True,
+            'shop': {'id': str(station.id), 'name': station.name},
+            'activeWash': {
+                'id': str(active_wash.id) if active_wash else None,
+                'status': active_wash.status if active_wash else 'no_wash',
+                'packageName': active_wash.package.name if active_wash and active_wash.package else None,
+                'workerName': worker_name if active_wash else None,
+                'createdAt': active_wash.created_at.isoformat() if active_wash else None
+            } if active_wash else None,
+            'queuePosition': queue_position,
+            'activeStamps': active_stamps,
+            'washGoal': wash_goal,
+            'isRewardReady': is_reward_ready,
+            'recentWashes': [
+                {
+                    'id': str(w.id),
+                    'createdAt': w.created_at.isoformat(),
+                    'paid': w.paid,
+                    'paymentMethod': w.payment_method,
+                    'redeemed': w.redeemed,
+                    'packageName': w.package.name if w.package else None
+                }
+                for w in recent_washes
+            ]
+        })
+
+
 class PublicWashRequestView(APIView):
     permission_classes = [AllowAny] # No login required!
 
@@ -556,4 +1095,8 @@ class PublicShopInfoView(APIView):
             'name': station.name,
             'logo': station.washstation_logo,
             'themeColor': station.theme_color,
+            'wifiName': station.wifi_name,
+            'wifiPassword': station.wifi_password,
+            'wifiType': station.wifi_type,
+            'wifiHidden': station.wifi_hidden,
         })

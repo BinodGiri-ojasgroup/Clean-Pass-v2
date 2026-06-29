@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useCallback } from 'react'
+import api from '@/lib/api'
 
 interface Customer { id: string; phone: string; name: string|null; createdAt: string; vehicles: { id:string; plateNo:string; vehicleTypeName:string; vehicleTypeIcon:string; washGoal:number; activeWashes:number }[] }
 
@@ -10,9 +11,8 @@ export default function CustomersPage() {
 
   const fetchCustomers = useCallback(async (q = '') => {
     setLoading(true)
-    const res = await fetch(`/api/customers${q ? `?search=${encodeURIComponent(q)}` : ''}`)
-    const data = await res.json()
-    if (data.success) setCustomers(data.data.customers || data.data)
+    const res = await api.get(`/customers/`, { params: { search: q || undefined } })
+    if (res.data.success) setCustomers(res.data.data.customers || res.data.data)
     setLoading(false)
   }, [])
 
