@@ -46,7 +46,7 @@ class Washstation(models.Model):
     plan_expires_at = models.DateTimeField(null=True, blank=True)
     active = models.BooleanField(default=True)
     free_limit = models.IntegerField(default=50)
-    washstation_logo = models.CharField(max_length=500, null=True, blank=True)
+    washstation_logo = models.CharField(max_length=500, null=True, blank=True) # logo image to be stored as a URL or base64 string
     theme_color = models.CharField(max_length=7, default="#0ea5e9")
     qr_code = models.CharField(max_length=500, null=True, blank=True)
     wifi_name = models.CharField(max_length=255, null=True, blank=True)

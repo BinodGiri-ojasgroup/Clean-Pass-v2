@@ -10,7 +10,7 @@ const NAV = [
   { href: '/dashboard/vehicles',     label: 'Vehicles',     icon: '🚗' },
   { href: '/dashboard/customers',    label: 'Customers',    icon: '👥' },
   { href: '/dashboard/workers',      label: 'Workers',      icon: '👷' },
-  { href: '/dashboard/appointments', label: 'Appointments', icon: '📅' },
+  // { href: '/dashboard/appointments', label: 'Appointments', icon: '📅' },
   { href: '/dashboard/packages',     label: 'Packages',     icon: '🧴' },
   { href: '/dashboard/summary',      label: 'Daily Summary',icon: '💰' },
   { href: '/dashboard/reports',      label: 'Reports',      icon: '📋' },
