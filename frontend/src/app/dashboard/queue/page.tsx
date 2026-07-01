@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import api from '@/lib/api' // 🔑 Imported your unified Axios instance
 
+interface Service { id: string; name: string; description: string; price: number; active: boolean }
 interface WashCard {
   id: string; status: string; createdAt: string; washStartAt: string | null
   plateNo: string; vehicleType: { name: string; icon: string }
@@ -10,6 +11,7 @@ interface WashCard {
   paid: boolean; paymentMethod: string | null
   worker: { id: string; name: string } | null
   notes: string | null
+  services?: Service[]
 }
 interface Worker { id: string; name: string }
 interface Summary {
@@ -20,6 +22,7 @@ interface Summary {
   redeemed: number
   byMethod: Record<string, { count: number; amount: number }>
   byWorker: { name: string; count: number; commission: number }[]
+  washes: WashCard[]
 }
 
 const PAYMENT_METHODS = [
@@ -32,7 +35,8 @@ const PAYMENT_METHODS = [
 
 const COL = {
   queued:  { label: 'Queue',   color: '#f59e0b', bg: 'rgba(245,158,11,0.07)',  next: 'washing' as const, nextLabel: '▶ Start wash' },
-  washing: { label: 'Washing', color: '#0ea5e9', bg: 'rgba(14,165,233,0.07)', next: 'done'    as const, nextLabel: '✓ Mark done'  },
+  washing: { label: 'Washing', color: '#0ea5e9', bg: 'rgba(14,165,233,0.07)', next: 'ready'   as const, nextLabel: '✓ Mark done'  },
+  ready:   { label: 'Ready',   color: '#22c55e', bg: 'rgba(34,197,94,0.05)',   next: 'done'    as const, nextLabel: '💰 Complete & Pay' },
 }
 
 function timeWaiting(dateStr: string) {
@@ -67,6 +71,19 @@ function WashCardItem({ card, cfg, workers, onMove, onUpdate, acting }: {
           {card.packageName && <div style={{ fontSize: 11, color: card.packageColor || cfg.color, fontWeight: 500, marginTop: 2 }}>{card.packageName}{card.packagePrice ? ` — NPR ${card.packagePrice}` : ''}</div>}
         </div>
       </div>
+
+      {/* Services */}
+      {card.services && card.services.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+            {card.services.map(service => (
+              <span key={service.id} style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: 'rgba(34,197,94,0.15)', color: '#22c55e' }}>
+                +{service.name}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
 
       {workers.length > 0 && (
         <div style={{ marginBottom: 8 }}>
@@ -103,9 +120,10 @@ export default function QueuePage() {
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
   const [payModal, setPayModal] = useState<WashCard | null>(null)
+  const [detailModal, setDetailModal] = useState<WashCard | null>(null)
   const [actingId, setActingId] = useState<string | null>(null)
   const [toast, setToast] = useState('')
-  const today = new Date().toISOString().split('T')[0]
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0])
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -115,7 +133,7 @@ export default function QueuePage() {
       const [qRes, wRes, sRes] = await Promise.all([
         api.get('washstations/queue/'), 
         api.get('auth/workers/'),
-        api.get(`/daily-summary/?date=${today}`)
+        api.get(`/daily-summary/?date=${selectedDate}`)
       ])
       if (qRes.data.success) setCards(qRes.data.data)
       if (wRes.data.success) setWorkers(wRes.data.data)
@@ -125,7 +143,7 @@ export default function QueuePage() {
     } finally {
       setLoading(false)
     }
-  }, [today])
+  }, [selectedDate])
 
   useEffect(() => {
     fetchQueue()
@@ -154,14 +172,19 @@ export default function QueuePage() {
     }
     await updateCard(card.id, { status: toStatus })
     setActingId(null)
-    showToast(`▶ Started wash for ${card.plateNo}`)
+    if (toStatus === 'washing') {
+      showToast(`▶ Started wash for ${card.plateNo}`)
+    } else if (toStatus === 'ready') {
+      showToast(`✓ ${card.plateNo} marked ready for pickup`)
+    }
   }
 
   async function completeWithPayment(paymentMethod: string) {
     if (!payModal) return
     setActingId(payModal.id)
-    const paid = paymentMethod !== 'credit'
-    await updateCard(payModal.id, { status: 'done', paymentMethod, paid })
+    const paid = paymentMethod !== 'credit' && paymentMethod !== 'free'
+    const redeemed = paymentMethod === 'free'
+    await updateCard(payModal.id, { status: 'done', paymentMethod, paid, redeemed })
     setPayModal(null)
     setActingId(null)
     showToast(`✓ ${payModal.plateNo} done · ${PAYMENT_METHODS.find(p => p.key === paymentMethod)?.label}`)
@@ -169,6 +192,7 @@ export default function QueuePage() {
 
   const queued  = cards.filter(c => c.status === 'queued')
   const washing = cards.filter(c => c.status === 'washing')
+  const ready   = cards.filter(c => c.status === 'ready')
 
   return (
     <div>
@@ -179,23 +203,26 @@ export default function QueuePage() {
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ fontFamily: 'Georgia, serif', fontSize: 26, fontWeight: 700, color: '#e8f4fd', margin: 0 }}>Wash Queue</h1>
         <p style={{ color: 'rgba(232,244,253,0.4)', fontSize: 14, marginTop: 4 }}>
-          {queued.length} waiting · {washing.length} in progress · refreshes every 5s
+          {queued.length} waiting · {washing.length} in progress · {ready.length} ready for pickup · refreshes every 5s
         </p>
       </div>
 
       {loading ? <div style={{ color: 'rgba(232,244,253,0.3)', textAlign: 'center', padding: '3rem' }}>Loading…</div> : (
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          {(['queued', 'washing'] as const).map(status => {
+          {(['queued', 'washing', 'ready'] as const).map(status => {
             const cfg = COL[status]
-            const colCards = status === 'queued' ? queued : washing
+            let colCards: WashCard[]
+            if (status === 'queued') colCards = queued
+            else if (status === 'washing') colCards = washing
+            else colCards = ready
             return (
               <div key={status} style={{ flex: 1, minWidth: 260, background: cfg.bg, border: `0.5px solid ${cfg.color}20`, borderRadius: 14, padding: '1rem' }}>
                 <div style={{ fontSize: 12, fontWeight: 600, color: cfg.color, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>
-                  {status === 'queued' ? '⏳' : '🚿'} {cfg.label} ({colCards.length})
+                  {status === 'queued' ? '⏳' : status === 'washing' ? '🚿' : '✅'} {cfg.label} ({colCards.length})
                 </div>
                 {colCards.length === 0 && (
                   <div style={{ fontSize: 13, color: 'rgba(232,244,253,0.25)', textAlign: 'center', padding: '1.5rem 0' }}>
-                    {status === 'queued' ? 'No vehicles waiting' : 'No active washes'}
+                    {status === 'queued' ? 'No vehicles waiting' : status === 'washing' ? 'No active washes' : 'No ready vehicles'}
                   </div>
                 )}
                 {colCards.map(c => (
@@ -207,7 +234,24 @@ export default function QueuePage() {
           })}
 
           <div style={{ flex: 1, minWidth: 260, background: 'rgba(34,197,94,0.05)', border: '0.5px solid rgba(34,197,94,0.15)', borderRadius: 14, padding: '1rem' }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>✓ Done today</div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#22c55e', textTransform: 'uppercase', letterSpacing: 1 }}>
+                ✓ Done: {new Date(selectedDate).toLocaleDateString()}
+              </div>
+              <input 
+                type="date" 
+                value={selectedDate} 
+                onChange={(e) => setSelectedDate(e.target.value)}
+                style={{
+                  background: 'rgba(255,255,255,0.1)',
+                  border: '0.5px solid rgba(255,255,255,0.2)',
+                  borderRadius: 6,
+                  padding: '4px 8px',
+                  color: '#e8f4fd',
+                  fontSize: 12
+                }}
+              />
+            </div>
             {summary ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -227,6 +271,46 @@ export default function QueuePage() {
                   <span style={{ fontSize: 12, color: 'rgba(232,244,253,0.5)' }}>Unpaid</span>
                   <span style={{ fontSize: 16, fontWeight: 700, color: '#f87171', fontFamily: 'Georgia, serif' }}>NPR {summary.totalUnpaid.toLocaleString()}</span>
                 </div>
+                {/* List of washes */}
+                {summary.washes && summary.washes.length > 0 && (
+                  <div style={{ marginTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem' }}>
+                    <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginBottom: 8 }}>Recent washes:</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 300, overflow: 'auto' }}>
+                      {summary.washes.map(wash => {
+                        const pm = PAYMENT_METHODS.find(p => p.key === wash.paymentMethod)
+                        return (
+                          <div 
+                            key={wash.id}
+                            onClick={() => setDetailModal(wash)}
+                            style={{
+                              background: 'rgba(255,255,255,0.05)',
+                              borderRadius: 8,
+                              padding: '8px 10px',
+                              cursor: 'pointer',
+                              transition: 'background 0.2s'
+                            }}
+                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                            onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: '#e8f4fd', fontFamily: 'monospace' }}>
+                                {wash.plateNo}
+                              </div>
+                              {pm && (
+                                <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4, background: `${pm.color}20`, color: pm.color }}>
+                                  {pm.emoji}
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginTop: 2 }}>
+                              {wash.packageName || 'Wash'}{wash.totalPrice ? ` · NPR ${wash.totalPrice}` : ''}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.3)', textAlign: 'center', padding: '1rem 0' }}>Loading summary…</div>
@@ -259,6 +343,121 @@ export default function QueuePage() {
               ))}
             </div>
             <button onClick={() => setPayModal(null)} style={{ width: '100%', background: 'transparent', border: '0.5px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '10px', fontSize: 13, color: 'rgba(232,244,253,0.4)', cursor: 'pointer' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {detailModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ background: '#0c1a2e', border: '0.5px solid rgba(56,189,248,0.25)', borderRadius: 20, padding: '2rem', width: '100%', maxWidth: 450 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
+              <div>
+                <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 20, color: '#e8f4fd', margin: 0 }}>
+                  {detailModal.plateNo}
+                </h2>
+                <p style={{ color: 'rgba(232,244,253,0.4)', fontSize: 13, margin: '4px 0 0' }}>
+                  {new Date(detailModal.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <button onClick={() => setDetailModal(null)} style={{ background: 'transparent', border: 'none', fontSize: 22, color: 'rgba(232,244,253,0.4)', cursor: 'pointer' }}>×</button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {/* Customer info */}
+              <div>
+                <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginBottom: 4 }}>Customer</div>
+                <div style={{ color: '#e8f4fd' }}>
+                  {detailModal.customerName || 'Unknown'}
+                  {detailModal.customerPhone ? ` · ${detailModal.customerPhone}` : ''}
+                </div>
+              </div>
+
+              {/* Package */}
+              <div>
+                <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginBottom: 4 }}>Package</div>
+                <div style={{ color: detailModal.packageColor || '#38bdf8', fontWeight: 600 }}>
+                  {detailModal.packageName || 'Wash'}{detailModal.packagePrice ? ` · NPR ${detailModal.packagePrice}` : ''}
+                </div>
+              </div>
+
+              {/* Services */}
+              {detailModal.services && detailModal.services.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginBottom: 4 }}>Services</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {detailModal.services.map(service => (
+                      <div key={service.id} style={{ color: '#22c55e', display: 'flex', justifyContent: 'space-between' }}>
+                        <span>{service.name}</span>
+                        <span>NPR {service.price}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Total */}
+              <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, color: 'rgba(232,244,253,0.5)' }}>Total</span>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: '#e8f4fd', fontFamily: 'Georgia, serif' }}>
+                    NPR {detailModal.totalPrice?.toLocaleString() || '0'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Payment info */}
+              <div>
+                <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginBottom: 4 }}>Payment</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {PAYMENT_METHODS.find(p => p.key === detailModal.paymentMethod) ? (
+                    <span style={{
+                      fontSize: 12,
+                      padding: '4px 8px',
+                      borderRadius: 6,
+                      background: `${PAYMENT_METHODS.find(p => p.key === detailModal.paymentMethod)?.color}20`,
+                      color: PAYMENT_METHODS.find(p => p.key === detailModal.paymentMethod)?.color,
+                      fontWeight: 500
+                    }}>
+                      {PAYMENT_METHODS.find(p => p.key === detailModal.paymentMethod)?.emoji} {PAYMENT_METHODS.find(p => p.key === detailModal.paymentMethod)?.label}
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)' }}>Not recorded</span>
+                  )}
+                  <span style={{
+                    fontSize: 12,
+                    padding: '4px 8px',
+                    borderRadius: 6,
+                    background: detailModal.paid ? 'rgba(34,197,94,0.15)' : 'rgba(248,113,113,0.15)',
+                    color: detailModal.paid ? '#22c55e' : '#f87171',
+                    fontWeight: 500
+                  }}>
+                    {detailModal.paid ? 'Paid' : 'Unpaid'}
+                  </span>
+                  {detailModal.redeemed && (
+                    <span style={{
+                      fontSize: 12,
+                      padding: '4px 8px',
+                      borderRadius: 6,
+                      background: 'rgba(245,158,11,0.15)',
+                      color: '#f59e0b',
+                      fontWeight: 500
+                    }}>
+                      🎁 Redeemed
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Worker */}
+              {detailModal.worker && (
+                <div>
+                  <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginBottom: 4 }}>Worker</div>
+                  <div style={{ color: '#e8f4fd' }}>
+                    👷 {detailModal.worker.name}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

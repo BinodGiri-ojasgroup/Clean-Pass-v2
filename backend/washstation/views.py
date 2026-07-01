@@ -19,14 +19,14 @@ from rest_framework import viewsets, permissions, status
 from django.core.exceptions import ValidationError
 
 from .models import (
-    Washstation, VehicleType, WashPackage, Worker, Shift,
+    Washstation, VehicleType, WashPackage, WashService, Worker, Shift,
     Customer, Vehicle, Wash, WashRequest, Appointment,
     WaitlistItem, PlatformWaitlist, WashStatus, RequestStatus,
     PaymentMethod, AppointmentStatus
 )
 from .serializers import (
     RegisterSerializer, WashstationSerializer, ShopUpdateSerializer,
-    VehicleTypeSerializer, WashPackageSerializer, WorkerSerializer,
+    VehicleTypeSerializer, WashPackageSerializer, WashServiceSerializer, WorkerSerializer,
     ShiftSerializer, CustomerSerializer, VehicleSerializer,
     WashSerializer, WashRequestSerializer, AppointmentSerializer,
     WaitlistItemSerializer, PlatformWaitlistSerializer
@@ -99,6 +99,12 @@ class VehicleTypeViewSet(TenantModelViewSet):
 class WashPackageViewSet(TenantModelViewSet):
     queryset = WashPackage.objects.all()
     serializer_class = WashPackageSerializer
+
+
+class WashServiceViewSet(TenantModelViewSet):
+    queryset = WashService.objects.all()
+    serializer_class = WashServiceSerializer
+
 
 class WorkerViewSet(TenantModelViewSet):
     queryset = Worker.objects.all()
@@ -498,10 +504,17 @@ class DashboardStatsView(APIView):
             washstation=station, date__gte=now.date()
         ).count()
 
-        revenue_data = Wash.objects.filter(
-            washstation=station, paid=True, created_at__gte=thirty_days_ago
-        ).aggregate(total=Sum('package__price'))
-        revenue_30d = float(revenue_data['total'] or 0)
+        # Calculate total revenue: package price + sum of service prices
+        washes_30d = Wash.objects.filter(washstation=station, paid=True, created_at__gte=thirty_days_ago)
+        revenue_30d = 0
+        for wash in washes_30d:
+            if not wash.redeemed:  # Don't count redeemed washes
+                # Add package price if available
+                if wash.package:
+                    revenue_30d += wash.package.price
+                # Add sum of service prices
+                for service in wash.services.all():
+                    revenue_30d += service.price
 
         days_7 = []
         for i in range(6, -1, -1):
@@ -575,8 +588,8 @@ class LiveWashQueueView(APIView):
 
         active_washes = Wash.objects.filter(
             washstation=station,
-            status__in=[WashStatus.QUEUED, WashStatus.WASHING]
-        )
+            status__in=[WashStatus.QUEUED, WashStatus.WASHING, WashStatus.READY]
+        ).prefetch_related('services')
         wash_data = []
         for w in active_washes:
             w_dict = WashSerializer(w).data
@@ -587,6 +600,7 @@ class LiveWashQueueView(APIView):
             w_dict['packageName'] = w.package.name if w.package else None
             w_dict['packagePrice'] = w.package.price if w.package else None
             w_dict['packageColor'] = w.package.color if w.package else '#0ea5e9'
+            w_dict['services'] = WashServiceSerializer(w.services.all(), many=True).data
             w_dict['worker'] = WorkerSerializer(w.worker).data if w.worker else None
             w_dict['washStartAt'] = w.wash_start_at.isoformat() if w.wash_start_at else None
             w_dict['createdAt'] = w.created_at.isoformat()
@@ -640,10 +654,12 @@ class WashRequestsView(APIView):
         ).order_by('-created_at')
         
         packages = WashPackage.objects.filter(washstation=station, active=True)
+        services = WashService.objects.filter(washstation=station, active=True)
         
         return ok({
             'requests': WashRequestSerializer(pending_requests, many=True).data,
-            'packages': WashPackageSerializer(packages, many=True).data
+            'packages': WashPackageSerializer(packages, many=True).data,
+            'services': WashServiceSerializer(services, many=True).data
         })
         
     def patch(self, request, pk=None):
@@ -676,6 +692,9 @@ class WashRequestsView(APIView):
                 status=WashStatus.QUEUED,
                 paid=paid
             )
+            
+            # Copy services from request to wash
+            wash.services.add(*wash_request.services.all())
             
             # Mark request as resolved
             wash_request.status = RequestStatus.RESOLVED
@@ -711,16 +730,20 @@ class ReportsView(APIView):
             washstation=station, created_at__gte=since
         ).select_related(
             'vehicle', 'vehicle__customer', 'vehicle__vehicle_type', 'package'
-        ).order_by('-created_at')
+        ).prefetch_related('services').order_by('-created_at')
 
         if export_format == 'csv':
             output = io.StringIO()
             writer = csv.writer(output)
             writer.writerow([
                 'Date', 'Plate No', 'Vehicle Type', 'Customer', 'Phone',
-                'Package', 'Price', 'Paid', 'Redeemed'
+                'Package', 'Package Price', 'Services', 'Services Total', 'Total Price', 'Paid', 'Redeemed'
             ])
             for w in washes:
+                services_str = ', '.join([s.name for s in w.services.all()])
+                services_total = sum(s.price for s in w.services.all())
+                package_price = w.package.price if w.package else 0
+                total_price = package_price + services_total
                 writer.writerow([
                     w.created_at.strftime('%Y-%m-%d'),
                     w.vehicle.plate_no if w.vehicle else '',
@@ -728,7 +751,10 @@ class ReportsView(APIView):
                     w.vehicle.customer.name if w.vehicle and w.vehicle.customer else '',
                     w.vehicle.customer.phone if w.vehicle and w.vehicle.customer else '',
                     w.package.name if w.package else 'Manual',
-                    w.package.price if w.package else 0,
+                    package_price,
+                    services_str,
+                    services_total,
+                    total_price,
                     'Yes' if w.paid else 'No',
                     'Yes' if w.redeemed else 'No'
                 ])
@@ -738,11 +764,19 @@ class ReportsView(APIView):
             response['Content-Disposition'] = f'attachment; filename="cleanpass-report-{days}days.csv"'
             return response
 
-        total_revenue = sum(w.package.price for w in washes if w.paid and w.package)
-        unpaid_revenue = sum(
-            w.package.price for w in washes
-            if not w.paid and not w.redeemed and w.package
-        )
+        total_revenue = 0
+        unpaid_revenue = 0
+        for w in washes:
+            if w.paid and not w.redeemed:
+                if w.package:
+                    total_revenue += w.package.price
+                for service in w.services.all():
+                    total_revenue += service.price
+            if not w.paid and not w.redeemed:
+                if w.package:
+                    unpaid_revenue += w.package.price
+                for service in w.services.all():
+                    unpaid_revenue += service.price
         redemptions = washes.filter(redeemed=True).count()
 
         return ok({
@@ -944,9 +978,11 @@ class PublicTrackView(APIView):
                     'recentWashes': []
                 })
 
-        # If there is an active wash, find queue position
+        # If there is an active wash, find queue position only if status is queued
+        worker_name = None
         if active_wash:
-            queue_position = Wash.objects.filter(washstation=station, status='queued', created_at__lt=active_wash.created_at).count() + 1
+            if active_wash.status == 'queued':
+                queue_position = Wash.objects.filter(washstation=station, status='queued', created_at__lt=active_wash.created_at).count() + 1
             worker_name = active_wash.worker.name if active_wash.worker else None
 
         return ok({
@@ -982,38 +1018,51 @@ class PublicWashRequestView(APIView):
 
     def post(self, request, shop_id):
         try:
-            station = Washstation.objects.get(id=shop_id, active=True)
-        except (Washstation.DoesNotExist, ValidationError, ValueError):
-            return err('Shop not found or inactive.', 404)
+            try:
+                station = Washstation.objects.get(id=shop_id, active=True)
+            except (Washstation.DoesNotExist, ValidationError, ValueError):
+                return err('Shop not found or inactive.', 404)
 
-        phone = request.data.get('phone')
-        plate_no = request.data.get('plate_no')
-        
-        if not phone or not plate_no:
-            return err('Phone and plate number are required.', 400)
+            phone = request.data.get('phone')
+            plate_no = request.data.get('plate_no')
+            service_ids = request.data.get('serviceIds', [])
+            
+            if not phone or not plate_no:
+                return err('Phone and plate number are required.', 400)
 
-        # 1. Create or get the customer
-        customer, _ = Customer.objects.get_or_create(
-            washstation=station, phone=phone,
-            defaults={'name': f'Customer {phone[-4:]}'}
-        )
+            # 1. Create or get the customer
+            customer, _ = Customer.objects.get_or_create(
+                washstation=station, phone=phone,
+                defaults={'name': f'Customer {phone[-4:]}'}
+            )
 
-        # 2. Create or get the vehicle
-        vehicle, _ = Vehicle.objects.get_or_create(
-            washstation=station, plate_no=plate_no,
-            defaults={'customer': customer}
-        )
+            # 2. Create or get the vehicle
+            normalized_plate = plate_no.replace(' ', '').upper()
+            vehicle, _ = Vehicle.objects.get_or_create(
+                washstation=station, plate_no=normalized_plate,
+                defaults={'customer': customer}
+            )
 
-        # 3. Create the wash request
-        wash_request = WashRequest.objects.create(
-            washstation=station, phone=phone, plate_no=plate_no,
-            customer=customer, vehicle=vehicle, status=RequestStatus.PENDING
-        )
+            # 3. Create the wash request
+            wash_request = WashRequest.objects.create(
+                washstation=station, phone=phone, plate_no=normalized_plate,
+                customer=customer, vehicle=vehicle, status=RequestStatus.PENDING
+            )
+            
+            # Add selected services
+            if service_ids:
+                services = WashService.objects.filter(id__in=service_ids, washstation=station)
+                wash_request.services.add(*services)
 
-        return ok({
-            'message': 'Wash request submitted successfully!',
-            'requestId': str(wash_request.id)
-        }, 201)
+            return ok({
+                'message': 'Wash request submitted successfully!',
+                'requestId': str(wash_request.id)
+            }, 201)
+        except Exception as e:
+            import traceback
+            print(f"ERROR creating wash request: {str(e)}")
+            print(traceback.format_exc())
+            return err(f'Something went wrong: {str(e)}', 500)
 class DailySummaryView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -1041,7 +1090,30 @@ class DailySummaryView(APIView):
             created_at__gte=start,
             created_at__lte=end,
             status=WashStatus.DONE
-        ).select_related('package', 'worker')
+        ).select_related('package', 'worker', 'vehicle', 'vehicle__customer', 'vehicle__vehicle_type').prefetch_related('services')
+
+        # Build wash list data
+        wash_list = []
+        for w in washes:
+            w_dict = WashSerializer(w).data
+            w_dict['plateNo'] = w.vehicle.plate_no if w.vehicle else ''
+            w_dict['vehicleType'] = VehicleTypeSerializer(w.vehicle.vehicle_type).data if (w.vehicle and w.vehicle.vehicle_type) else {'name': 'Car', 'icon': '🚗'}
+            w_dict['customerName'] = w.vehicle.customer.name if (w.vehicle and w.vehicle.customer) else None
+            w_dict['customerPhone'] = w.vehicle.customer.phone if (w.vehicle and w.vehicle.customer) else ''
+            w_dict['packageName'] = w.package.name if w.package else None
+            w_dict['packagePrice'] = w.package.price if w.package else None
+            w_dict['packageColor'] = w.package.color if w.package else '#0ea5e9'
+            w_dict['services'] = WashServiceSerializer(w.services.all(), many=True).data
+            w_dict['worker'] = WorkerSerializer(w.worker).data if w.worker else None
+            w_dict['createdAt'] = w.created_at.isoformat()
+            # Calculate total price
+            total_price = 0
+            if w.package:
+                total_price += w.package.price
+            for service in w.services.all():
+                total_price += service.price
+            w_dict['totalPrice'] = total_price
+            wash_list.append(w_dict)
 
         # Payment method breakdown
         by_method = {}
@@ -1050,7 +1122,10 @@ class DailySummaryView(APIView):
             if m not in by_method:
                 by_method[m] = {'count': 0, 'amount': 0}
             by_method[m]['count'] += 1
-            by_method[m]['amount'] += w.package.price if w.package else 0
+            amount = w.package.price if w.package else 0
+            for service in w.services.all():
+                amount += service.price
+            by_method[m]['amount'] += amount
 
         # Worker breakdown
         by_worker = {}
@@ -1063,8 +1138,19 @@ class DailySummaryView(APIView):
                 by_worker[name]['commission'] += w.worker.commission
 
         total_washes = washes.count()
-        total_revenue = sum(w.package.price for w in washes if w.paid and w.package)
-        total_unpaid = sum(w.package.price for w in washes if not w.paid and w.package)
+        total_revenue = 0
+        total_unpaid = 0
+        for w in washes:
+            if w.paid and not w.redeemed:
+                if w.package:
+                    total_revenue += w.package.price
+                for service in w.services.all():
+                    total_revenue += service.price
+            if not w.paid:
+                if w.package:
+                    total_unpaid += w.package.price
+                for service in w.services.all():
+                    total_unpaid += service.price
         redeemed = washes.filter(redeemed=True).count()
 
         return ok({
@@ -1075,6 +1161,7 @@ class DailySummaryView(APIView):
             'redeemed': redeemed,
             'byMethod': by_method,
             'byWorker': list(by_worker.values()),
+            'washes': wash_list
         })
 class PublicShopInfoView(APIView):
     """
@@ -1089,6 +1176,9 @@ class PublicShopInfoView(APIView):
         except (Washstation.DoesNotExist, ValidationError, ValueError):
             return err('Shop not found or inactive.', 404)
 
+        services = WashService.objects.filter(washstation=station, active=True)
+        service_data = WashServiceSerializer(services, many=True).data
+
         # Return only safe, public-facing data
         return ok({
             'id': str(station.id),
@@ -1099,4 +1189,5 @@ class PublicShopInfoView(APIView):
             'wifiPassword': station.wifi_password,
             'wifiType': station.wifi_type,
             'wifiHidden': station.wifi_hidden,
+            'services': service_data,
         })

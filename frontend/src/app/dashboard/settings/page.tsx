@@ -150,33 +150,33 @@ export default function SettingsPage() {
   async function saveSection(data: Record<string,unknown>, label: string) {
     setSaving(true)
     try {
-      let res;
+      let payload;
       if (label === 'Branding') {
-        const formData = new FormData()
-        formData.append('theme_color', themeColor)
-        if (shopLogoFile) {
-          formData.append('washstation_logo', shopLogoFile)
-        }
-        res = await api.patch('/shops/me/', formData)
-        // Clear the file after successful save
-        setShopLogoFile(null)
+        payload = mapStateToApi({ 
+          theme_color: themeColor, 
+          washstation_logo: shopLogo || null // shopLogo is the base64 preview string
+        })
       } else {
-        const payload = mapStateToApi(data)
+        payload = mapStateToApi(data)
         // Normalize phone if present
         if (payload.phone) payload.phone = normalizePhone(String(payload.phone))
-        res = await api.patch('/shops/me/', payload, {
-          headers: { 'Content-Type': 'application/json' }
-        })
       }
+      
+      const res = await api.patch('/shops/me/', payload, {
+        headers: { 'Content-Type': 'application/json' }
+      })
       
       if (res.data.success) {
         showSaved(`✓ ${label} saved`)
         setShop(mapApiToState(res.data.data))
+        setShopLogoFile(null) // Clear the file after save
       } else {
         showSaved(`✗ Failed to save ${label}`)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Save failed:", err)
+      console.error("Error response data:", err.response?.data)
+      console.error("Error status:", err.response?.status)
       showSaved(`✗ Network error saving ${label}`)
     }
     setSaving(false)

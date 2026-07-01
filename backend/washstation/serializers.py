@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from .models import (
-    Washstation, VehicleType, WashPackage, Worker, Shift,
+    Washstation, VehicleType, WashPackage, WashService, Worker, Shift,
     Customer, Vehicle, Wash, WashRequest, Appointment,
     WaitlistItem, PlatformWaitlist
 )
@@ -80,6 +80,14 @@ class WashPackageSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['id', 'created_at', 'washstation']
 
+
+class WashServiceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WashService
+        fields = '__all__'
+        read_only_fields = ['id', 'created_at', 'washstation']
+
+
 class WorkerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Worker
@@ -124,20 +132,23 @@ class WashSerializer(serializers.ModelSerializer):
     washDoneAt = serializers.DateTimeField(source='wash_done_at', read_only=True)
     package = WashPackageSerializer(read_only=True)
     worker = WorkerSerializer(read_only=True)
+    services = WashServiceSerializer(many=True, read_only=True)
     
     class Meta:
         model = Wash
-        fields = ['id', 'washstation', 'vehicle', 'package', 'worker', 'paid', 'paymentMethod', 'redeemed', 'redeemed_at', 'status', 'washStartAt', 'washDoneAt', 'notes', 'createdAt']
+        fields = ['id', 'washstation', 'vehicle', 'package', 'services', 'worker', 'paid', 'paymentMethod', 'redeemed', 'redeemed_at', 'status', 'washStartAt', 'washDoneAt', 'notes', 'createdAt']
         read_only_fields = ['id', 'created_at', 'washstation']
+
 
 class WashRequestSerializer(serializers.ModelSerializer):
     plateNo = serializers.CharField(source='plate_no')
     createdAt = serializers.DateTimeField(source='created_at')
     package = WashPackageSerializer(read_only=True)
+    services = WashServiceSerializer(many=True, read_only=True)
     
     class Meta:
         model = WashRequest
-        fields = ['id', 'phone', 'plateNo', 'package', 'status', 'createdAt', 'resolved_at']
+        fields = ['id', 'phone', 'plateNo', 'package', 'services', 'status', 'createdAt', 'resolved_at']
         read_only_fields = ['id', 'created_at', 'washstation']
 
 class AppointmentSerializer(serializers.ModelSerializer):

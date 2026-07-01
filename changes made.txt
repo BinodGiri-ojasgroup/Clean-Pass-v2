@@ -141,3 +141,136 @@ Frontend Changes:
 
 22. src/app/dashboard/queue/page.tsx:
     - Updated the select element (for assigning workers) to always have black text (color: '#000000') instead of conditional color
+
+23. backend/washstation/models.py
+    - Updated washstation_logo from CharField to TextField to support longer base64 strings
+
+24. src/app/dashboard/settings/page.tsx
+    - Switched from sending FormData for branding to sending a JSON payload with base64-encoded shopLogo string
+
+25. backend/washstation/views.py (PublicCustomerView)
+    - fixed active_washes to only count non-redeemed washes for loyalty eligibility
+    - adjusted is_reward_ready to use correct active_washes count
+    - fixed vehicle list activeWashes to also count only non-redeemed washes
+
+26. frontend/src/app/dashboard/queue/page.tsx
+    - when completing with 'free wash' payment method, now sets redeemed=true and paid=false
+    - updated completeWithPayment function
+
+27. backend/washstation/views.py (LiveWashQueueView)
+    - added support for updating 'redeemed' field in PATCH requests
+
+28. backend/washstation/views.py (WashRequestsView)
+    - added logic to auto-mark washes as redeemed (free) when approving a request if vehicle is eligible
+    - eligible = non-redeemed washes >= wash goal of vehicle type
+    - if eligible, sets paid=false and redeemed=true
+
+29. backend/washstation/views.py (DailySummaryView)
+    - removed status=WashStatus.DONE filter to count all today's washes
+    - updated total_revenue, total_unpaid, and by_method amounts to exclude redeemed washes
+
+30. backend/washstation/views.py (DashboardStatsView)
+    - updated revenue30d calculation to exclude redeemed washes
+
+31. backend/washstation/views.py (ReportsView)
+    - updated total_revenue to exclude redeemed washes
+
+32. backend/washstation/views.py (PublicTrackView)
+    - fixed activeStamps to count only non-redeemed washes for loyalty eligibility
+
+33. src/lib/phone.ts
+    - Added normalizePlate, formatPlate, isValidNepaliPlate functions for Nepali license plates
+    - normalizePlate: removes all spaces and trims
+    - formatPlate: formats to exact Nepali license plate format (2-3 letters, 1-2 digits, 2-3 letters, 1-4 digits, e.g., BA 15 CHA 2345 or BA 1 CHA 2345)
+    - isValidNepaliPlate: validates using regex to match exact format (2-3 letters, 1-2 digits, 2-3 letters, 1-4 digits)
+
+34. src/app/scan/[shopId]/page.tsx
+    - Added handlePlateChange function to format plate as user types
+    - Updated plate input to use handlePlateChange and added maxLength=15
+    - Updated handleSubmit to validate plate number using isValidNepaliPlate
+    - Updated handleComboInputChange to handle plate formatting
+    - Replaced old normPlate function with new normalizePlate
+
+35. backend/washstation/views.py (PublicWashRequestView)
+    - Added try-except block around entire POST request to catch and log errors
+    - Now returns descriptive error message instead of generic "Something went wrong"
+    - Logs full traceback to console for debugging
+
+36. src/app/scan/[shopId]/page.tsx
+    - Added console logs to handleSubmit to debug the request and response
+    - Logs request data, response, and errors to browser console
+    - Fixed ReferenceError: "normPlate is not defined" by replacing all instances of "normPlate" with "normalizePlate" (which is imported from @/lib/phone)
+    - Updated format of StatusCard to use formatPlate for display
+    - Added console logs to fetchStatus, handleMyCard, handleCheckStatus
+
+37. backend/washstation/views.py (PublicTrackView and PublicCustomerView)
+    - PublicTrackView: Added normalization to plate number (remove spaces, uppercase)
+    - PublicTrackView: Added try-except block for full error logging and descriptive error messages
+    - PublicTrackView: Updated to handle 'ready' status and not show queue position unless status is queued
+    - PublicCustomerView: Added normalization to both phone and plate number inputs
+    - PublicCustomerView: Added try-except block for full error logging and descriptive error messages
+38. backend/washstation/models.py
+    - Added WashStatus.READY (value 'ready', label 'Ready') to support washed vehicles ready for pickup before payment
+39. backend/washstation/views.py (LiveWashQueueView)
+    - Updated active_washes filter to include WashStatus.READY
+40. frontend/src/app/dashboard/queue/page.tsx
+    - Updated COL object to include 'ready' with appropriate color, background, next status and label
+    - Added 'ready' filter for cards
+    - Updated layout to map ['queued', 'washing', 'ready']
+    - Updated moveStatus to handle 'ready' and show appropriate toast message
+41. frontend/src/app/scan/[shopId]/page.tsx
+    - Updated StatusCard to show a new section for 'ready' status
+
+42. backend/washstation/models.py
+    - Already had WashService model and many-to-many fields on Wash and WashRequest, but applied migrations for them (0003_washservice_wash_services_washrequest_services)
+
+43. backend/washstation/views.py
+    - Added WashService to imports
+    - Added WashServiceSerializer to imports
+    - Updated LiveWashQueueView to prefetch_related('services') and include services in wash data (w_dict['services'])
+    - Updated DailySummaryView to include services in total_revenue, total_unpaid, and by_method calculations
+    - Updated ReportsView to prefetch_related('services'), include services in CSV export, and include services in total_revenue and unpaid_revenue
+    - DashboardStatsView was already correctly calculating revenue including services
+
+44. frontend/src/app/dashboard/packages/page.tsx
+    - Added Service interface
+    - Added services state
+    - Added showServiceForm state
+    - Added editingService state
+    - Added serviceForm state
+    - Updated load() to fetch services from /api/services/
+    - Added saveService() to handle creating and updating services
+    - Added deleteService() to handle deleting services
+    - Added Services section UI between Vehicle Types and Wash Packages
+    - Added Service form modal
+
+45. frontend/src/app/scan/[shopId]/page.tsx
+    - Added Service interface
+    - Updated ShopInfo interface to include services
+    - Added selectedServices state
+    - Updated handleSubmit() to send serviceIds in request
+    - Updated reset() to clear selectedServices
+    - Added services selection section in the wash request form with checkboxes
+
+46. backend/washstation/views.py (DailySummaryView)
+    - Updated to prefetch_related('vehicle', 'vehicle__customer', 'vehicle__vehicle_type')
+    - Added wash_list with full wash details including services
+    - Added totalPrice calculation for each wash
+    - Returned washes in the response alongside summary data
+
+47. frontend/src/app/dashboard/approvals/page.tsx
+    - Added Service interface
+    - Updated Request interface to include services
+    - Added display of selected services as green badges
+    - Updated fetchRequests() to get services from API (already returned by backend)
+
+48. frontend/src/app/dashboard/queue/page.tsx
+    - Added Service interface
+    - Updated WashCard interface to include services and totalPrice
+    - Updated Summary interface to include washes
+    - Added services display on wash cards (WashCardItem component)
+    - Added selectedDate state and date picker
+    - Added fetchQueue() to use selectedDate
+    - Added wash list in daily summary with clickable items
+    - Added detailModal state and wash detail popup modal
+    - Modal shows: customer info, package, services with prices, total, payment info, worker

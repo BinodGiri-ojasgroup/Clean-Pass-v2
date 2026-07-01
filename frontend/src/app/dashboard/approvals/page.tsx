@@ -2,7 +2,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import api from '@/lib/api'
 
-interface Request { id: string; phone: string; plateNo: string; createdAt: string; package?: { name: string; price: number; color: string } | null }
+interface Service { id: string; name: string; description: string; price: number; active: boolean }
+interface Request { id: string; phone: string; plateNo: string; createdAt: string; package?: { name: string; price: number; color: string } | null; services?: Service[] }
 interface Package { id: string; name: string; price: number; color: string }
 interface VehicleType { id: string; name: string; icon: string }
 
@@ -111,6 +112,20 @@ export default function ApprovalsPage() {
               </div>
               <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.3)' }}>{timeAgo(r.createdAt)}</div>
             </div>
+
+            {/* Services */}
+            {r.services && r.services.length > 0 && (
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 }}>Selected Services:</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {r.services.map(service => (
+                    <div key={service.id} style={{ padding: '5px 12px', borderRadius: 6, background: 'rgba(34, 197, 94, 0.15)', border: '1px solid rgba(34, 197, 94, 0.3)', color: '#22c55e', fontSize: 12 }}>
+                      {service.name} · NPR {service.price}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Package selection */}
             {packages.length > 0 && (

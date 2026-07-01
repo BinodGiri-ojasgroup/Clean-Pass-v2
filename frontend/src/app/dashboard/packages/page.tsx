@@ -8,6 +8,7 @@ interface Package {
   vehicleTypeId: string|null; vehicle_type?: { name: string }|null 
 }
 interface VehicleType { id: string; name: string; icon: string; wash_goal: number }
+interface Service { id: string; name: string; description: string|null; price: number; active: boolean }
 
 const COLORS = ['#0ea5e9','#8b5cf6','#f59e0b','#10b981','#ef4444','#ec4899','#f97316','#6366f1']
 const VT_ICONS = ['🚗','🏍️','🚙','🚌','🚐','🚑','🚒','🚜']
@@ -15,14 +16,18 @@ const VT_ICONS = ['🚗','🏍️','🚙','🚌','🚐','🚑','🚒','🚜']
 export default function PackagesPage() {
   const [packages, setPackages] = useState<Package[]>([])
   const [vehicleTypes, setVehicleTypes] = useState<VehicleType[]>([])
+  const [services, setServices] = useState<Service[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showPkgForm, setShowPkgForm] = useState(false)
   const [showVtForm, setShowVtForm] = useState(false)
+  const [showServiceForm, setShowServiceForm] = useState(false)
   const [editingVt, setEditingVt] = useState<VehicleType | null>(null)
+  const [editingService, setEditingService] = useState<Service | null>(null)
   const [toast, setToast] = useState('')
   const [pkgForm, setPkgForm] = useState({ name: '', description: '', price: '', stampValue: '1', color: '#0ea5e9', vehicle_type: '' })
   const [vtForm, setVtForm] = useState({ name: '', icon: '🚗', wash_goal: '8' })
+  const [serviceForm, setServiceForm] = useState({ name: '', description: '', price: '' })
 
   function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(''), 3000) }
 
@@ -31,16 +36,18 @@ export default function PackagesPage() {
     setError(null)
     try {
       // 👇 Use centralized 'api' client with trailing slashes
-      const [pRes, vRes] = await Promise.all([
+      const [pRes, vRes, sRes] = await Promise.all([
         api.get('/packages/'),
-        api.get('/vehicle-types/')
+        api.get('/vehicle-types/'),
+        api.get('/services/')
       ])
       
       // DRF returns arrays directly
       setPackages(Array.isArray(pRes.data) ? pRes.data : [])
       setVehicleTypes(Array.isArray(vRes.data) ? vRes.data : [])
+      setServices(Array.isArray(sRes.data) ? sRes.data : [])
     } catch (err) {
-      console.error('Failed to load packages:', err)
+      console.error('Failed to load data:', err)
       setError('Unable to connect to the backend.')
     } finally {
       setLoading(false)
@@ -110,6 +117,46 @@ export default function PackagesPage() {
     }
   }
 
+  async function saveService(e: React.FormEvent) {
+    e.preventDefault()
+    try {
+      if (editingService) {
+        await api.patch(`/services/${editingService.id}/`, {
+          name: serviceForm.name,
+          description: serviceForm.description || null,
+          price: Number(serviceForm.price)
+        })
+        showToast('✓ Service updated')
+      } else {
+        await api.post('/services/', {
+          name: serviceForm.name,
+          description: serviceForm.description || null,
+          price: Number(serviceForm.price),
+          active: true
+        })
+        showToast('✓ Service added')
+      }
+      await load()
+      setShowServiceForm(false)
+      setEditingService(null)
+      setServiceForm({ name:'', description:'', price:'' })
+    } catch (err) {
+      console.error('Failed to save service:', err)
+      showToast('✗ Failed to save service')
+    }
+  }
+
+  async function deleteService(id: string) {
+    try {
+      await api.delete(`/services/${id}/`)
+      await load()
+      showToast('Service removed')
+    } catch (err) {
+      console.error('Failed to delete service:', err)
+      showToast('✗ Failed to remove service')
+    }
+  }
+
   const card: React.CSSProperties = { background: 'rgba(255,255,255,0.04)', border: '0.5px solid rgba(56,189,248,0.12)', borderRadius: 14, padding: '1.25rem 1.5rem', marginBottom: '1rem' }
   const inp: React.CSSProperties = { width: '100%', border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 8, padding: '10px 14px', fontSize: 14, background: '#0f2035', color: '#e8f4fd', outline: 'none', boxSizing: 'border-box' }
   const lbl: React.CSSProperties = { display: 'block', fontSize: 13, color: 'rgba(232,244,253,0.5)', marginBottom: 6 }
@@ -139,6 +186,27 @@ export default function PackagesPage() {
             </div>
             <button onClick={() => { setEditingVt(vt); setVtForm({ name: vt.name, icon: vt.icon, wash_goal: String(vt.wash_goal) }); setShowVtForm(true) }}
               style={{ background: 'transparent', border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#38bdf8', cursor: 'pointer' }}>Edit</button>
+          </div>
+        ))}
+      </div>
+
+      {/* Services */}
+      <div style={card}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <h2 style={{ fontSize: 15, fontWeight: 600, color: '#e8f4fd', margin: 0 }}>🛠️ Services</h2>
+          <button onClick={() => { setShowServiceForm(true); setEditingService(null); setServiceForm({ name:'', description:'', price:'' }) }} style={{ background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>+ Add service</button>
+        </div>
+        <p style={{ fontSize: 12, color: 'rgba(232,244,253,0.35)', margin: '0 0 1rem' }}>Add-on services customers can select (e.g., Interior Vacuum, Wax, Tire Shine).</p>
+        {loading ? <div style={{ color: 'rgba(232,244,253,0.3)', textAlign: 'center', padding: '1rem' }}>Loading...</div> : services.filter(s => s.active).map(service => (
+          <div key={service.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '0.5px solid rgba(56,189,248,0.07)' }}>
+            <div style={{ width: 38, height: 38, borderRadius: 8, background: 'rgba(245,158,11,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 }}>🛠️</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: '#e8f4fd' }}>{service.name} <span style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)', fontWeight: 400 }}>· NPR {service.price}</span></div>
+              <div style={{ fontSize: 12, color: 'rgba(232,244,253,0.4)' }}>{service.description || 'No description'}</div>
+            </div>
+            <button onClick={() => { setEditingService(service); setServiceForm({ name: service.name, description: service.description || '', price: String(service.price) }); setShowServiceForm(true) }}
+              style={{ background: 'transparent', border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#38bdf8', cursor: 'pointer', marginRight: 8 }}>Edit</button>
+            <button onClick={() => deleteService(service.id)} style={{ background: 'transparent', border: '0.5px solid rgba(248,113,113,0.3)', borderRadius: 6, padding: '4px 10px', fontSize: 12, color: '#f87171', cursor: 'pointer' }}>Remove</button>
           </div>
         ))}
       </div>
@@ -211,6 +279,24 @@ export default function PackagesPage() {
               </div>
               <div><label style={lbl}>Wash goal (for free wash)</label><input type="number" min={1} max={50} value={vtForm.wash_goal} onChange={e => setVtForm(p=>({...p,wash_goal:e.target.value}))} style={inp} /></div>
               <button type="submit" style={{ background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8, padding: '12px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>{editingVt ? 'Save changes' : 'Add vehicle type'}</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Service form modal */}
+      {showServiceForm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
+          <div style={{ background: '#0c1a2e', border: '0.5px solid rgba(56,189,248,0.2)', borderRadius: 18, padding: '2rem', width: '100%', maxWidth: 380 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+              <h2 style={{ fontFamily: 'Georgia, serif', fontSize: 18, color: '#e8f4fd', margin: 0 }}>{editingService ? 'Edit service' : 'Add service'}</h2>
+              <button onClick={() => { setShowServiceForm(false); setEditingService(null) }} style={{ background: 'transparent', border: 'none', fontSize: 22, color: 'rgba(232,244,253,0.4)', cursor: 'pointer' }}>×</button>
+            </div>
+            <form onSubmit={saveService} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div><label style={lbl}>Service name *</label><input value={serviceForm.name} onChange={e => setServiceForm(p=>({...p,name:e.target.value}))} required style={inp} placeholder="e.g. Interior Vacuum" /></div>
+              <div><label style={lbl}>Description</label><input value={serviceForm.description} onChange={e => setServiceForm(p=>({...p,description:e.target.value}))} style={inp} placeholder="Vacuum the interior" /></div>
+              <div><label style={lbl}>Price (NPR) *</label><input type="number" value={serviceForm.price} onChange={e => setServiceForm(p=>({...p,price:e.target.value}))} required style={inp} placeholder="100" /></div>
+              <button type="submit" style={{ background: '#0ea5e9', color: '#fff', border: 'none', borderRadius: 8, padding: '12px', fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>{editingService ? 'Save changes' : 'Add service'}</button>
             </form>
           </div>
         </div>

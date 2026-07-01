@@ -1,7 +1,15 @@
 'use client'
 import { useState, useEffect, useRef, useCallback, use } from 'react'
 import api from '@/lib/api'
-import { normalizePhone, isValidNepaliPhone } from '@/lib/phone'
+import { normalizePhone, isValidNepaliPhone, normalizePlate, formatPlate, isValidNepaliPlate } from '@/lib/phone'
+
+interface Service {
+  id: string
+  name: string
+  description: string | null
+  price: number
+  active: boolean
+}
 
 interface ShopInfo {
   id: string
@@ -12,6 +20,7 @@ interface ShopInfo {
   wifiPassword?: string | null
   wifiType?: string | null
   wifiHidden?: boolean | null
+  services?: Service[]
 }
 
 type Step = 'form' | 'submitted' | 'tracking' | 'check_form' | 'checking' | 'my_card'
@@ -37,6 +46,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
   // Request form
   const [phone, setPhone] = useState('')
   const [plateNo, setPlateNo] = useState('')
+  const [selectedServices, setSelectedServices] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -67,15 +77,33 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
     if (x.startsWith('0')) x = x.slice(1)
     return x
   }
-  function normPlate(p: string) { return p.toUpperCase().replace(/\s+/g, ' ').trim() }
   function handlePhoneChange(value: string, setter: (v: string) => void) {
     const cleaned = value.replace(/[^\d\s\-().]/g, '')
     setter(cleaned)
   }
+
+  function handlePlateChange(value: string) {
+    // Only allow alphanumeric and spaces, convert to uppercase
+    const cleaned = value.toUpperCase().replace(/[^A-Z0-9\s]/g, '')
+    // Format the plate as the user types
+    const formatted = formatPlate(cleaned)
+    setPlateNo(formatted)
+  }
   function handleComboInputChange(value: string, setter: (v: string) => void) {
-    // Allow digits, spaces, hyphens, parentheses, and letters (for plates)
-    const cleaned = value.replace(/[^\d\s\-().a-zA-Z]/g, '')
-    setter(cleaned)
+    // Check if input looks like a phone or plate
+    const isPhone = /^[\d\s\-().]+$/.test(value)
+    if (isPhone) {
+      const cleaned = value.replace(/[^\d\s\-().]/g, '')
+      setter(cleaned)
+    } else {
+      // Treat as plate number
+      handlePlateChange(value)
+      // Wait, no—setter could be setCheckInput or setMyCardInput
+      // So let's handle formatting but set with the provided setter
+      const cleaned = value.toUpperCase().replace(/[^A-Z0-9\s]/g, '')
+      const formatted = formatPlate(cleaned)
+      setter(formatted)
+    }
   }
 
   function playChime() {
@@ -107,7 +135,10 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
 
   const fetchStatus = useCallback(async (plate: string) => {
     try {
-      const res = await api.get(`/public/track/${shopId}/?plateNo=${encodeURIComponent(normPlate(plate))}`)
+      const normalizedPlate = normalizePlate(plate)
+      console.log('Fetching wash status for plate:', normalizedPlate)
+      const res = await api.get(`/public/track/${shopId}/?plateNo=${encodeURIComponent(normalizedPlate)}`)
+      console.log('Wash status response:', res)
       if (!res.data.success || !res.data.data.found) { 
         setStatusLoading(false)
         return 
@@ -131,7 +162,9 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
         isRewardReady: d.isRewardReady || false,
         recentWashes: d.recentWashes || [],
       })
-    } catch { /**/ }
+    } catch (err) { 
+      console.error('Error fetching wash status:', err)
+    }
     setStatusLoading(false)
   }, [shopId])
 
@@ -160,6 +193,9 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
     if (!phone.trim()) return setError('Phone number is required')
     if (!isValidNepaliPhone(phone)) return setError('Please enter a valid Nepali phone number')
     if (!plateNo.trim()) return setError('Vehicle plate number is required')
+    if (!isValidNepaliPlate(plateNo)) return setError('Please enter a valid Nepali license plate number')
+    
+    console.log('Requesting wash with:', { phone: normPhone(phone), plate_no: normalizePlate(plateNo), serviceIds: selectedServices })
     
     try {
       if (!audioRef.current) audioRef.current = new AudioContext()
@@ -172,19 +208,25 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
     try {
       const res = await api.post(`/public/wash-requests/${shopId}/`, {
         phone: normPhone(phone),
-        plate_no: normPlate(plateNo)
+        plate_no: normalizePlate(plateNo),
+        serviceIds: selectedServices
       })
+      
+      console.log('Wash request response:', res)
+      console.log('Response data:', res.data)
       
       if (!res.data.success) { 
         setError(res.data.error || 'Something went wrong')
         return 
       }
       
-      const plate = normPlate(plateNo)
+      const plate = normalizePlate(plateNo)
       setTrackingPlate(plate)
       prevStatusRef.current = 'pending'
       setStep('submitted')
     } catch (err: any) {
+      console.error('Error requesting wash:', err)
+      console.error('Error response:', err.response)
       setError(err.response?.data?.error || 'Something went wrong. Try again.')
     } finally { 
       setLoading(false) 
@@ -201,13 +243,15 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
     try {
       const isPhone = /^[+0-9\s]{7,15}$/.test(input) && !/[A-Za-z]/.test(input)
       const normP = isPhone ? normPhone(input) : null
-      const normPlateVal = !isPhone ? normPlate(input) : null
+      const normPlateVal = !isPhone ? normalizePlate(input) : null
       
       const url = normPlateVal
         ? `/public/customer/${shopId}/?plateNo=${encodeURIComponent(normPlateVal)}`
         : `/public/customer/${shopId}/?phone=${encodeURIComponent(normP!)}`
       
+      console.log('Fetching my card with:', url)
       const res = await api.get(url)
+      console.log('My card response:', res)
       
       if (!res.data.success) return setMyCardError('Something went wrong')
       if (!res.data.data.exists) return setMyCardError('No loyalty card found. Complete a wash first!')
@@ -221,7 +265,8 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
         setMyCardData(res.data.data)
       }
       setStep('my_card')
-    } catch { 
+    } catch (err) { 
+      console.error('Error fetching my card:', err)
       setMyCardError('Something went wrong') 
     }
   }
@@ -240,7 +285,9 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
     if (isPhone) {
       const normP = normPhone(input)
       try {
+        console.log('Checking status with phone:', normP)
         const res = await api.get(`/public/customer/${shopId}/?phone=${encodeURIComponent(normP)}`)
+        console.log('Check status phone response:', res)
         if (res.data.success && res.data.data.exists && res.data.data.vehicles?.length > 0) {
           setMyVehicles(res.data.data.vehicles)
           if (res.data.data.vehicles.length === 1) {
@@ -250,11 +297,14 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
         } else {
           setCheckError('No vehicles found for this phone number')
         }
-      } catch { 
+      } catch (err) { 
+        console.error('Error checking status by phone:', err)
         setCheckError('Something went wrong') 
       }
     } else {
-      setCheckPlate(normPlate(input))
+      const plate = normalizePlate(input)
+      console.log('Checking status with plate:', plate)
+      setCheckPlate(plate)
       setStep('checking')
     }
   }
@@ -274,6 +324,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
     setMyCardInput('')
     setMyCardError('')
     setMyCardData(null)
+    setSelectedServices([])
     prevStatusRef.current = null
     if (pollRef.current) { 
       clearInterval(pollRef.current)
@@ -361,6 +412,14 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
           </div>
         )}
 
+        {status === 'ready' && (
+          <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 16, padding: '1.5rem', textAlign: 'center' }}>
+            <div style={{ fontSize: 48, marginBottom: 10 }}>✅</div>
+            <h3 style={{ color: '#4ade80', fontSize: 18, fontWeight: 700, margin: '0 0 6px' }}>Wash complete and ready for pickup!</h3>
+            <p style={{ color: 'rgba(232,244,253,0.4)', fontSize: 13, margin: 0 }}>Show your phone to staff to complete payment and collect your keys</p>
+          </div>
+        )}
+
         {(status === 'done' || status === 'no_wash') && (
           <div style={{ background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.3)', borderRadius: 16, padding: '1.5rem', textAlign: 'center' }}>
             <div style={{ fontSize: 48, marginBottom: 10 }}>✅</div>
@@ -418,7 +477,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
       <div style={{ width: '100%', maxWidth: 400 }}>
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
           {shop?.logo
-            ? <img src={shop.logo} alt={shop.name} style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'cover', marginBottom: 10, border: `2px solid ${theme}40` }} />
+            ? <img src={shop.logo} alt={shop.name} style={{ width: 64, height: 64, borderRadius: 16, objectFit: 'cover', marginBottom: 10, margin: '0 auto 10px', border: `2px solid ${theme}40` }} />
             : <div style={{ width: 64, height: 64, borderRadius: 16, background: `${theme}20`, border: `2px solid ${theme}40`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, margin: '0 auto 10px' }}>🚗</div>}
           {shop && <>
             <div style={{ color: '#e8f4fd', fontSize: 20, fontWeight: 700 }}>{shop.name}</div>
@@ -436,8 +495,37 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
                 </div>
                 <div>
                   <label style={lbl}>🚗 Plate number *</label>
-                  <input suppressHydrationWarning type="text" value={plateNo} onChange={e => setPlateNo(e.target.value.toUpperCase())} placeholder="BA 1 PA 2345" required style={{ ...inp, fontFamily: 'monospace', letterSpacing: 1 }} />
+                  <input suppressHydrationWarning type="text" value={plateNo} onChange={e => handlePlateChange(e.target.value)} placeholder="BA 1 PA 2345" maxLength={15} required style={{ ...inp, fontFamily: 'monospace', letterSpacing: 1 }} />
                 </div>
+
+                {shop?.services && shop.services.length > 0 && (
+                  <div>
+                    <label style={lbl}>🛠️ Additional services (optional)</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      {shop.services.filter(s => s.active).map(service => (
+                        <label key={service.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'rgba(255,255,255,0.03)', border: selectedServices.includes(service.id) ? `1px solid ${theme}` : '0.5px solid rgba(56,189,248,0.2)', borderRadius: 10, padding: '0.75rem', cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedServices.includes(service.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedServices([...selectedServices, service.id])
+                              } else {
+                                setSelectedServices(selectedServices.filter(id => id !== service.id))
+                              }
+                            }}
+                            style={{ width: 18, height: 18, accentColor: theme }}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <div style={{ color: '#e8f4fd', fontSize: 14, fontWeight: 500 }}>{service.name} <span style={{ color: 'rgba(232,244,253,0.5)', fontSize: 12 }}>· NPR {service.price}</span></div>
+                            {service.description && <div style={{ color: 'rgba(232,244,253,0.4)', fontSize: 11 }}>{service.description}</div>}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {error && <div style={{ background: 'rgba(248,113,113,0.1)', border: '0.5px solid rgba(248,113,113,0.3)', borderRadius: 8, padding: '10px 14px', color: '#f87171', fontSize: 13 }}>⚠ {error}</div>}
                 <button type="submit" disabled={loading} style={{ ...btnPrimary, opacity: loading ? 0.75 : 1, marginTop: 4 }}>
                   {loading ? 'Submitting…' : '🚗 Submit wash request'}
@@ -551,7 +639,7 @@ export default function ScanPage({ params }: { params: Promise<{ shopId: string 
 
         {step === 'checking' && (
           <div style={card}>
-            <StatusCard plate={normPlate(checkPlate)} />
+            <StatusCard plate={formatPlate(checkPlate)} />
           </div>
         )}
 

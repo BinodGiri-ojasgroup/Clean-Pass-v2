@@ -4,7 +4,7 @@ from rest_framework.routers import DefaultRouter
 
 
 from .views import (
-    WashstationViewSet, VehicleTypeViewSet, WashPackageViewSet,
+    WashstationViewSet, VehicleTypeViewSet, WashPackageViewSet, WashServiceViewSet,
     WorkerViewSet, ShiftViewSet, CustomerViewSet, VehicleViewSet,
     WashViewSet, WashRequestViewSet, AppointmentViewSet, 
     WaitlistItemViewSet, PlatformWaitlistViewSet,
@@ -16,6 +16,7 @@ router = DefaultRouter()
 router.register(r'shops', WashstationViewSet, basename='shop')
 router.register(r'vehicle-types', VehicleTypeViewSet, basename='vehicle-type')
 router.register(r'packages', WashPackageViewSet, basename='package')
+router.register(r'services', WashServiceViewSet, basename='service')
 router.register(r'workers', WorkerViewSet, basename='worker')
 router.register(r'shifts', ShiftViewSet, basename='shift')
 router.register(r'customers', CustomerViewSet, basename='customer')

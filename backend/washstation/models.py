@@ -6,6 +6,7 @@ from django.contrib.auth.models import User
 class WashStatus(models.TextChoices):
     QUEUED = 'queued', 'Queued'
     WASHING = 'washing', 'Washing'
+    READY = 'ready', 'Ready'
     DONE = 'done', 'Done'
     CANCELLED = 'cancelled', 'Cancelled'
 
@@ -46,7 +47,7 @@ class Washstation(models.Model):
     plan_expires_at = models.DateTimeField(null=True, blank=True)
     active = models.BooleanField(default=True)
     free_limit = models.IntegerField(default=50)
-    washstation_logo = models.CharField(max_length=500, null=True, blank=True) # logo image to be stored as a URL or base64 string
+    washstation_logo = models.TextField(null=True, blank=True) # logo image stored as base64 string (for simplicity)
     theme_color = models.CharField(max_length=7, default="#0ea5e9")
     qr_code = models.CharField(max_length=500, null=True, blank=True)
     wifi_name = models.CharField(max_length=255, null=True, blank=True)
@@ -75,6 +76,19 @@ class VehicleType(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.washstation.name})"
+
+
+class WashService(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    washstation = models.ForeignKey(Washstation, on_delete=models.CASCADE, related_name='services')
+    name = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+    price = models.IntegerField()
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} - {self.washstation.name}"
 
 
 class WashPackage(models.Model):
@@ -155,6 +169,7 @@ class Wash(models.Model):
     # Changed to SET_NULL to preserve financial history if a vehicle is deleted
     vehicle = models.ForeignKey(Vehicle, on_delete=models.SET_NULL, null=True, blank=True, related_name='washes')
     package = models.ForeignKey(WashPackage, on_delete=models.SET_NULL, null=True, blank=True, related_name='washes')
+    services = models.ManyToManyField(WashService, related_name='washes', blank=True)
     worker = models.ForeignKey(Worker, on_delete=models.SET_NULL, null=True, blank=True, related_name='washes')
     paid = models.BooleanField(default=True)
     payment_method = models.CharField(max_length=20, choices=PaymentMethod.choices, default=PaymentMethod.CASH)
@@ -181,6 +196,7 @@ class WashRequest(models.Model):
     plate_no = models.CharField(max_length=50)
     vehicle_type = models.ForeignKey(VehicleType, on_delete=models.SET_NULL, null=True, blank=True, related_name='wash_requests')
     package = models.ForeignKey(WashPackage, on_delete=models.SET_NULL, null=True, blank=True, related_name='wash_requests')
+    services = models.ManyToManyField(WashService, related_name='wash_requests', blank=True)
     customer = models.ForeignKey(Customer, on_delete=models.SET_NULL, null=True, blank=True, related_name='wash_requests')
     vehicle = models.ForeignKey(Vehicle, on_delete=models.SET_NULL, null=True, blank=True, related_name='wash_requests')
     status = models.CharField(max_length=20, choices=RequestStatus.choices, default=RequestStatus.PENDING)
