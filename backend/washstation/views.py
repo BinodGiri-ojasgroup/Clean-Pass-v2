@@ -604,6 +604,9 @@ class LiveWashQueueView(APIView):
             w_dict['worker'] = WorkerSerializer(w.worker).data if w.worker else None
             w_dict['washStartAt'] = w.wash_start_at.isoformat() if w.wash_start_at else None
             w_dict['createdAt'] = w.created_at.isoformat()
+            w_dict['paid'] = w.paid
+            w_dict['paymentMethod'] = w.payment_method
+            w_dict['redeemed'] = w.redeemed
             wash_data.append(w_dict)
         return ok(wash_data)
         
@@ -632,9 +635,23 @@ class LiveWashQueueView(APIView):
             wash.save()
         if 'paymentMethod' in request.data:
             wash.payment_method = request.data['paymentMethod']
+            # If payment method is free, set paid=False and redeemed=True
+            if request.data['paymentMethod'] == PaymentMethod.FREE:
+                wash.paid = False
+                wash.redeemed = True
+                wash.redeemed_at = timezone.now()
             wash.save()
         if 'paid' in request.data:
             wash.paid = request.data['paid']
+            wash.save()
+        if 'redeemed' in request.data:
+            was_redeemed = wash.redeemed
+            wash.redeemed = request.data['redeemed']
+            if request.data['redeemed'] and not was_redeemed:
+                wash.redeemed_at = timezone.now()
+                wash.paid = False
+            elif not request.data['redeemed'] and was_redeemed:
+                wash.redeemed_at = None
             wash.save()
             
         return ok(WashSerializer(wash).data)
@@ -684,13 +701,28 @@ class WashRequestsView(APIView):
                     package = None
             paid = request.data.get('paid', True)
             
+            # Check if eligible for free wash
+            eligible = False
+            if wash_request.vehicle and wash_request.vehicle.vehicle_type:
+                # Count non-redeemed washes for this vehicle at this station
+                vehicle_washes = Wash.objects.filter(
+                    vehicle=wash_request.vehicle,
+                    washstation=station,
+                    redeemed=False
+                ).count()
+                if vehicle_washes >= wash_request.vehicle.vehicle_type.wash_goal:
+                    eligible = True
+            
             # Create wash
             wash = Wash.objects.create(
                 washstation=station,
                 vehicle=wash_request.vehicle,
                 package=package,
                 status=WashStatus.QUEUED,
-                paid=paid
+                paid=not eligible,  # If eligible, not paid
+                redeemed=eligible,
+                redeemed_at=timezone.now() if eligible else None,
+                payment_method=PaymentMethod.FREE if eligible else (PaymentMethod.CASH if paid else PaymentMethod.CREDIT)
             )
             
             # Copy services from request to wash
@@ -1122,10 +1154,12 @@ class DailySummaryView(APIView):
             if m not in by_method:
                 by_method[m] = {'count': 0, 'amount': 0}
             by_method[m]['count'] += 1
-            amount = w.package.price if w.package else 0
-            for service in w.services.all():
-                amount += service.price
-            by_method[m]['amount'] += amount
+            # Only add amount if not redeemed (free wash)
+            if not w.redeemed:
+                amount = w.package.price if w.package else 0
+                for service in w.services.all():
+                    amount += service.price
+                by_method[m]['amount'] += amount
 
         # Worker breakdown
         by_worker = {}
@@ -1146,7 +1180,8 @@ class DailySummaryView(APIView):
                     total_revenue += w.package.price
                 for service in w.services.all():
                     total_revenue += service.price
-            if not w.paid:
+            # Only count as unpaid if not redeemed and not paid
+            if not w.paid and not w.redeemed:
                 if w.package:
                     total_unpaid += w.package.price
                 for service in w.services.all():

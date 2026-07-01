@@ -12,6 +12,8 @@ interface WashCard {
   worker: { id: string; name: string } | null
   notes: string | null
   services?: Service[]
+  redeemed?: boolean
+  totalPrice?: number
 }
 interface Worker { id: string; name: string }
 interface Summary {
@@ -96,7 +98,11 @@ function WashCardItem({ card, cfg, workers, onMove, onUpdate, acting }: {
       )}
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
-        {pm ? (
+        {card.redeemed ? (
+          <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: 'rgba(245,158,11,0.2)', color: '#f59e0b', fontWeight: 500 }}>
+            🎁 Free
+          </span>
+        ) : pm ? (
           <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, background: `${pm.color}20`, color: pm.color, fontWeight: 500 }}>
             {pm.emoji} {pm.label}
           </span>
@@ -262,7 +268,7 @@ export default function QueuePage() {
                   <span style={{ fontSize: 12, color: 'rgba(232,244,253,0.5)' }}>Cash collected</span>
                   <span style={{ fontSize: 16, fontWeight: 700, color: '#22c55e', fontFamily: 'Georgia, serif' }}>
                     NPR {Object.entries(summary.byMethod)
-                      .filter(([m]) => m !== 'credit' && m !== 'free')
+                      .filter(([m]) => m !== 'credit')
                       .reduce((s, [, v]) => s + v.amount, 0)
                       .toLocaleString()}
                   </span>
@@ -303,7 +309,7 @@ export default function QueuePage() {
                               )}
                             </div>
                             <div style={{ fontSize: 11, color: 'rgba(232,244,253,0.4)', marginTop: 2 }}>
-                              {wash.packageName || 'Wash'}{wash.totalPrice ? ` · NPR ${wash.totalPrice}` : ''}
+                              {wash.packageName || 'Wash'}{wash.redeemed ? ' · Free' : wash.totalPrice ? ` · NPR ${wash.totalPrice}` : ''}
                             </div>
                           </div>
                         )
@@ -399,8 +405,8 @@ export default function QueuePage() {
               <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: 13, color: 'rgba(232,244,253,0.5)' }}>Total</span>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: '#e8f4fd', fontFamily: 'Georgia, serif' }}>
-                    NPR {detailModal.totalPrice?.toLocaleString() || '0'}
+                  <span style={{ fontSize: 18, fontWeight: 700, color: detailModal.redeemed ? '#f59e0b' : '#e8f4fd', fontFamily: 'Georgia, serif' }}>
+                    {detailModal.redeemed ? 'Free' : `NPR ${detailModal.totalPrice?.toLocaleString() || '0'}`}
                   </span>
                 </div>
               </div>

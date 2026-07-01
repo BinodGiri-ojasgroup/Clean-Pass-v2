@@ -274,3 +274,28 @@ Frontend Changes:
     - Added wash list in daily summary with clickable items
     - Added detailModal state and wash detail popup modal
     - Modal shows: customer info, package, services with prices, total, payment info, worker
+49. backend/washstation/views.py (DailySummaryView)
+    - Fixed payment method breakdown to exclude amount for redeemed washes
+    - Fixed total_unpaid to only count unpaid and not redeemed washes
+50. frontend/src/app/dashboard/queue/page.tsx
+    - Updated WashCard interface to include redeemed field
+    - Fixed cash collected calculation to use backend byMethod.amount (already excludes free washes)
+    - Updated wash list to show "Free" for redeemed washes
+    - Updated detail modal to show "Free" for redeemed washes
+51. backend/washstation/views.py (LiveWashQueueView patch)
+    - Added support for 'redeemed' field in patch
+    - When setting paymentMethod to 'free', automatically set paid=False, redeemed=True, redeemed_at=now
+    - When setting redeemed=True, set paid=False and redeemed_at=now
+    - When setting redeemed=False, clear redeemed_at
+52. backend/washstation/views.py (WashRequestsView)
+    - Added eligibility check for free wash when approving a request
+    - If eligible (non-redeemed washes >= vehicle type wash_goal), set:
+      - paid=False
+      - redeemed=True
+      - redeemed_at=now
+      - payment_method=PaymentMethod.FREE
+    - If not eligible, set payment_method to CASH or CREDIT based on paid flag
+53. backend/washstation/views.py (LiveWashQueueView get)
+    - Added 'paid', 'paymentMethod', 'redeemed' to wash_data returned by GET
+54. frontend/src/app/dashboard/queue/page.tsx (WashCardItem)
+    - Updated WashCardItem to show 🎁 Free badge when card.redeemed is true
